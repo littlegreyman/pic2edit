@@ -2,6 +2,16 @@
 
 Covers the degenerate-loop cases seen in the wild plus the "clean output must
 not be touched" guarantee.
+
+NOTE (2026-10-25): the *paraphrased document restart* degeneration (the model
+re-lists the document from the top but changes the opener, e.g. 产品名称 ->
+企业名称, then gets truncated by max_tokens) is deliberately NOT covered here:
+real-machine parameter sweeps proved it is a **generation** problem -- it is
+fixed at the llama.cpp/DeepSeek-OCR sampling level (temperature=0 greedy,
+repeat_last_n=4096 -- the default 64 cannot reach across a full-document cycle,
+repeat_penalty=1.10), not by client-side text repair. `_trim_restart_by_key`
+in text_utils.py remains only as a best-effort fallback and is known NOT to
+handle the paraphrased variant, so no test asserts that here.
 """
 import os
 import sys
@@ -51,6 +61,9 @@ _BLOCK_DUP = (
 GENUINE_BLOCK = REAL + " " + _BLOCK
 LOOP_BLOCK_DUP = GENUINE_BLOCK + " " + _BLOCK_DUP
 
+# 注：模型“重启重列”且改写开头词（产品名称 -> 企业名称）的退化**不在本文件测试**——
+# 已改由生成参数层面根治（见文件头 NOTE），客户端不做该场景的断言。
+
 
 def _check(name, cond):
     print(f"[{'PASS' if cond else 'FAIL'}] {name}")
@@ -80,7 +93,7 @@ def main():
     ok &= _check("block-dup (differing tail) trimmed", t4 == GENUINE_BLOCK)
     ok &= _check("block-dup removes the extra copy", t4.endswith("服务热线：4006-315-138")
                  and t4.count("服务热线") == 1)
-    # 5) empty / short input safe
+    # 6) empty / short input safe
     ok &= _check("empty safe", trim_trailing_repetition("") == "")
     ok &= _check("short safe", trim_trailing_repetition("abc") == "abc")
 

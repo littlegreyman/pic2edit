@@ -23,6 +23,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import threading
 import http.server
 
@@ -33,7 +34,10 @@ from backends.llamacpp_backend import LlamaCppBackend
 from utils.input_prep import prepare_input
 from config import Config, PROMPT_TEMPLATES
 
-CLINIC_DEFAULT = r"C:\Users\michael\Downloads\clinic_form.jpg"
+# 真实样例图片的默认路径：使用中性相对名，不在源码中硬编码任何个人路径/用户名。
+# 开发者本机可用环境变量 PIC2EDIT_CLINIC 指向真实样例（例如
+# C:\Users\<你>\Downloads\clinic_form.jpg）来启用真机回归；其它机器该文件不存在则跳过。
+CLINIC_DEFAULT = os.environ.get("PIC2EDIT_CLINIC", "clinic_form.jpg")
 FAILS = []
 
 # 真实服务端（原生 deepseek-ocr 模板）会自动注入 media marker；客户端若在文本里
@@ -164,9 +168,29 @@ def _start_mock():
     return srv, port
 
 
-# --------------------------------------------------------------------------- #
-# 主流程
-# --------------------------------------------------------------------------- #
+def _resolve_sandbox_image(path):
+    """沙箱契约测试只需“任意合法 PNG”来验证请求结构与拆包，不依赖具体图片内容。
+
+    若默认样例不存在（例如克隆到其它机器），用 Pillow 生成一张最小合法 PNG（48x48）
+    写入临时文件，让契约测试开箱即用；开发者仍可用 --image 或环境变量 PIC2EDIT_CLINIC
+    指定真实样例。
+    """
+    if os.path.isfile(path):
+        return path
+    # 运行时用 Pillow 生成（Pillow 为本项目依赖，必然可用），避免手写 base64 转录出错；
+    # 48x48 满足 mock 契约“解码图片不能过小（<100 字节）”的校验。
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (48, 48), (240, 240, 240)).save(buf, "PNG")
+    fd, tmp = tempfile.mkstemp(suffix=".png")
+    with os.fdopen(fd, "wb") as f:
+        f.write(buf.getvalue())
+    print("   （默认样例不存在，已用合成 48x48 PNG 跑契约测试；"
+          "如需真机回归请用 --image 或设置 PIC2EDIT_CLINIC）")
+    return tmp
+
+
 def main():
     ap = argparse.ArgumentParser(description="llama.cpp / DeepSeek-OCR 后端验证")
     ap.add_argument("--live", default=os.environ.get("PIC2EDIT_LIVE_URL", ""),
@@ -174,10 +198,16 @@ def main():
     ap.add_argument("--image", default=CLINIC_DEFAULT, help="用于验证的图片路径")
     args = ap.parse_args()
 
-    image = args.image
-    if not os.path.isfile(image):
-        print(f"[ABORT] 图片不存在: {image}")
-        sys.exit(2)
+    if args.live:
+        # 真机模式必须基于真实图片才有意义，缺失则明确报错（不用合成图冒充）
+        if not os.path.isfile(args.image):
+            print(f"[ABORT] 真机模式需要真实图片，但找不到: {args.image}")
+            print("   请用 --image 指定，或设置环境变量 PIC2EDIT_CLINIC 指向本机真实样例。")
+            sys.exit(2)
+        image = args.image
+    else:
+        # 沙箱契约测试：缺省样例时自动合成最小 PNG，保证开箱即用
+        image = _resolve_sandbox_image(args.image)
 
     cfg = Config()
     prompt = cfg.prompt()  # 例如 "<|grounding|>Convert the document to markdown."

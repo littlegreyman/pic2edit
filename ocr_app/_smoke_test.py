@@ -331,8 +331,10 @@ except Exception as e:
     print("   logging error:", repr(e))
 
 
-# 10. Real-file regression on the user's sample (skipped if absent on this machine)
-clinic = r"C:\Users\michael\Downloads\clinic_form.jpg"
+# 10. Real-file regression on a sample image (skipped unless present on this machine).
+# 不使用硬编码的个人路径/用户名：默认中性相对名 clinic_form.jpg，可用环境变量
+# PIC2EDIT_CLINIC 指向本机真实样例以启用真机回归，其它机器文件不存在则自动跳过。
+clinic = os.environ.get("PIC2EDIT_CLINIC", "clinic_form.jpg")
 if os.path.isfile(clinic):
     try:
         items = prepare_input(clinic, WORK)

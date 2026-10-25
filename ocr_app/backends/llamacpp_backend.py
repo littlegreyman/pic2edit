@@ -68,13 +68,20 @@ class LlamaCppBackend(OCRBackend):
         payload = {
             "model": self.model,
             "messages": messages,
+            # 关键：temperature 必须保持 0（贪心/确定性）。实测 temp>0 会让 DeepSeek-OCR
+            # 在密集页面上**随机**退化——同一组参数既能干净输出，也可能崩成“同一块重复
+            # 上百次”（正是 tempo_package.jpg 偶发重列/截断的根因）。只有贪心是稳定的。
             "temperature": 0.0,
-            # 关键：DeepSeek-OCR 在密集页面 + 贪心解码下极易“复读”死循环
-            # （把最后一行无限重复直到 max_tokens 耗尽）。repeat_penalty=1.0（默认）
-            # 不惩罚重复，必触发。设 1.05 即可可靠止住复读且基本不影响 OCR 质量。
-            # 即便服务端启动没带 --repeat-penalty，请求里带也能覆盖默认，立即生效。
-            "repeat_penalty": 1.05,
-            "max_tokens": 8192,
+            # repeat_penalty 轻微惩罚重复（1.10，比默认 1.0 强、又不会像 1.15+ 那样
+            # 过度压制导致提前吐 EOS 并冒出英文营销语）。
+            "repeat_penalty": 1.10,
+            # 关键发现：默认的 repeat_last_n=64 只往后看 64 个 token，而“整篇从头重列”
+            # 的循环周期是整个文档（上千 token），惩罚窗口根本够不到 —— 所以 64 对这类
+            # 长程退化完全无效。把窗口放大到 4096，惩罚才能真正抑制长程复读。
+            # 即便服务端启动没带 --repeat-last-n，请求里带也能覆盖默认，立即生效。
+            "repeat_last_n": 4096,
+            # 给完整文档留足余量，避免长文档被截断（贪心不会 runaway，正常几百~上千字符即停）。
+            "max_tokens": 16384,
         }
         url = self.base_url + "/v1/chat/completions"
         try:
@@ -129,9 +136,7 @@ class LlamaCppBackend(OCRBackend):
         # 直接 400。这是用真实服务端（build b11853）反复验证过的结论。
         messages = self._build_messages(prompt, b64)
         raw = self._chat(messages)
-        # DeepSeek-OCR 在密集页面 + 贪心解码下会陷入“复读”死循环（同一行/同一块
-        # 无限重复直到 max_tokens 耗尽）。repeat_penalty 只能缓解、无法根治，所以这里
-        # 再加一道客户端兜底：检测并裁掉尾部循环。实测 tempo_package.jpg 上能把 10273
-        # 字符的复读结果裁成完整干净的 ~600 字符真实 OCR（真实内容用全角括号（20xx），
-        # 循环体用方括号 [20xx]，首个方括号即循环起点）。
+        # 参数层面已把退化基本压住（请求 payload：温度=0 贪心 + repeat_penalty=1.10 +
+        # repeat_last_n=4096 + max_tokens=16384）。客户端裁剪只作为最后一道兜底：
+        # 万一仍出现尾部复读/重列，trim_trailing_repetition 再兜底裁掉，保证导出文本干净。
         return trim_trailing_repetition(raw)

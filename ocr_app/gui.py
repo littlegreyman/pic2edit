@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 
 import markdown
 
-from config import Config, RESOLUTION_MODES, PROMPT_TEMPLATES
+from config import Config, RESOLUTION_MODES, PROMPT_LABELS
 from backends import OllamaBackend, TransformersBackend, LlamaCppBackend
 from worker import OcrWorker
 from utils.input_prep import prepare_input, InputItem
@@ -95,13 +95,9 @@ class SettingsDialog(QDialog):
         self.resolution = QComboBox()
         self.resolution.addItems(list(RESOLUTION_MODES.keys()))
         self.resolution.setCurrentText(cfg.resolution)
-        self.prompt_tpl = QComboBox()
-        self.prompt_tpl.addItems(list(PROMPT_TEMPLATES.keys()))
-        self.prompt_tpl.setCurrentText(cfg.prompt_template)
         self.output_dir = QLineEdit(cfg.output_dir)
         self.output_dir.setPlaceholderText("（空=与输入文件同目录）")
         layout.addRow("分辨率模式", self.resolution)
-        layout.addRow("提示词模板", self.prompt_tpl)
         layout.addRow("导出目录", self.output_dir)
 
         btns = QDialogButtonBox(
@@ -122,7 +118,6 @@ class SettingsDialog(QDialog):
         self.cfg.tf_model_path = self.tf_model.text().strip()
         self.cfg.tf_quant = self.tf_quant.currentText()
         self.cfg.resolution = self.resolution.currentText()
-        self.cfg.prompt_template = self.prompt_tpl.currentText()
         self.cfg.output_dir = self.output_dir.text().strip()
         return self.cfg
 
@@ -156,6 +151,15 @@ class MainWindow(QMainWindow):
             btn = QPushButton(text)
             btn.clicked.connect(slot)
             toolbar.addWidget(btn)
+
+        # 输出格式（提示词模板）下拉：让“表格”模式在主线即可选，不必进设置
+        toolbar.addWidget(QLabel("  输出格式："))
+        self.template_combo = QComboBox()
+        for key, label in PROMPT_LABELS.items():
+            self.template_combo.addItem(label, key)
+        self._sync_template_combo()
+        self.template_combo.currentIndexChanged.connect(self._on_template_changed)
+        toolbar.addWidget(self.template_combo)
 
         split = QSplitter(Qt.Orientation.Horizontal)
 
@@ -194,6 +198,7 @@ class MainWindow(QMainWindow):
         self.status_log.setMaximumHeight(150)
         self.status_log.setStyleSheet(
             "border:1px solid #ccc; background:#fafafa; "
+            "color:#1565c0; "
             "font-family:Consolas,monospace; font-size:10px;"
         )
         self._log_emitter = LogEmitter()
@@ -233,6 +238,19 @@ class MainWindow(QMainWindow):
         ok = self.backend.available()
         tag = "就绪" if ok else "不可用"
         return f"后端[{self.backend.name}] {tag}（{self.cfg.resolution} / {self.cfg.prompt_template}）"
+
+    # ---------- 输出格式（提示词模板）----------
+    def _sync_template_combo(self):
+        idx = self.template_combo.findData(self.cfg.prompt_template)
+        if idx >= 0:
+            self.template_combo.setCurrentIndex(idx)
+
+    def _on_template_changed(self, _idx):
+        key = self.template_combo.currentData()
+        if key and key != self.cfg.prompt_template:
+            self.cfg.prompt_template = key
+            self.cfg.save()
+            self.statusBar().showMessage(self._backend_status())
 
     # ---------- 文件导入 ----------
     def open_files(self):
@@ -410,6 +428,7 @@ class MainWindow(QMainWindow):
             self.cfg = dlg.get_config()
             self.cfg.save()
             self.backend = self._build_backend()
+            self._sync_template_combo()
             self.statusBar().showMessage(self._backend_status())
 
     def closeEvent(self, event):

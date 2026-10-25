@@ -50,7 +50,9 @@ HTTP 头：`Content-Type: application/json`。
     }
   ],
   "temperature": 0.0,
-  "max_tokens": 8192
+  "max_tokens": 16384,
+  "repeat_penalty": 1.10,
+  "repeat_last_n": 4096
 }
 ```
 
@@ -64,7 +66,8 @@ HTTP 头：`Content-Type: application/json`。
 3. **图片编码**：`image_url.url` 为 `data:image/png;base64,<B64>`，MIME 必须与图片实际格式一致
    （pic2edit 统一先落为 PNG，故用 `image/png`）。
 4. **`stream` 不设置**（默认 false，返回完整对象）；不要开流式，否则拆包结构不同。
-5. `temperature` 取 0 保证确定性；`max_tokens` 取 8192 避免长文档被截断。
+5. `temperature` 必须取 0（贪心/确定性）：实测 `temp>0` 会让 DeepSeek-OCR 在密集页面上**随机**退化——同参数既能干净输出、也可能崩成“同一块重复上百次”，不可靠；只有贪心稳定。
+6. `max_tokens` 取 16384 给完整文档留足余量（贪心不会 runaway，正常几百~上千字符即停）；`repeat_penalty` 取 1.10（比默认 1.0 强，又不会像 1.15+ 那样过度压制导致提前 EOS 并冒英文营销语）；**关键**：`repeat_last_n` 放大到 4096——llama.cpp 默认仅 64，只往后看 64 token，而“整篇从头重列”的循环周期是整篇文档（上千 token），默认窗口够不到、对长程退化完全无效，放大后才能真正抑制。以上 `repeat_penalty`/`repeat_last_n`/`max_tokens`/`temperature` 均放在请求 payload 里（已实测服务端采纳）。
 
 官方提示词示例（DeepSeek-OCR README，注意官方示例里的 `<image>` 是给“自托管/非原生模板”
 场景的占位；原生模板下**不要**写）：

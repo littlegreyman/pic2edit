@@ -38,6 +38,14 @@ PROMPT_TEMPLATES = {
     "table":    "<|grounding|>Convert the document to markdown.",
 }
 
+# 给 GUI 显示用的中文标签（value 为 PROMPT_TEMPLATES 的 key）
+PROMPT_LABELS = {
+    "markdown": "Markdown（默认）",
+    "ocr":      "纯文本 OCR",
+    "figure":   "图表/公式",
+    "table":    "表格（键值→表）",
+}
+
 
 @dataclass
 class Config:

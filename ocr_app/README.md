@@ -203,7 +203,7 @@ run_llamacpp_server.bat   :: 启动本地 OCR 服务（默认 http://localhost:8
 
 所有调用格式与返回包拆包以 `docs/llamacpp_deepseek_ocr_api.md` 为唯一权威。验证分两层：
 
-1. **契约自检（沙箱可跑，无需 GPU/模型）**：`verify_backend.py` 用严格按文档实现的 mock llama-server，对真实样例 `C:\Users\michael\Downloads\clinic_form.jpg` 跑完整流程，逐字段断言请求结构（image_url 块 + 纯提示词、**不含任何 media marker**、PNG base64 图片）与返回包拆包。
+1. **契约自检（沙箱可跑，无需 GPU/模型）**：`verify_backend.py` 用严格按文档实现的 mock llama-server，对真实样例 `clinic_form.jpg`（可用环境变量 `PIC2EDIT_CLINIC` 覆盖为本机真实路径）跑完整流程，逐字段断言请求结构（image_url 块 + 纯提示词、**不含任何 media marker**、PNG base64 图片）与返回包拆包。
 
    ```bat
    .venv\Scripts\python.exe verify_backend.py
@@ -216,3 +216,18 @@ run_llamacpp_server.bat   :: 启动本地 OCR 服务（默认 http://localhost:8
    ```
 
 常规回归：`.venv\Scripts\python.exe _smoke_test.py`（含 PDF/TIF/导出/三后端/启动器/clinic_form.jpg 真实文件回归）。
+
+## 许可证与第三方署名
+
+本项目（pic2edit 自身源码）以 **MIT License** 发布，见仓库根目录 [LICENSE](../../LICENSE)。
+
+本项目**不打包、不内置**任何模型权重或第三方二进制；DeepSeek-OCR 模型、llama.cpp 引擎均通过 `download_models*.py` / `run_llamacpp_server*` 在**运行时**从官方来源下载到本地（已被 `.gitignore` 排除，不入库）。因此本仓库仅分发我们自己的封装代码与脚本，相关上游组件按其各自许可证使用：
+
+| 上游组件 | 用途 | 许可证（运行时获取） | 备注 |
+| --- | --- | --- | --- |
+| [DeepSeek-OCR](https://github.com/deepseek-ai/DeepSeek-OCR)（模型 + 官方推理代码） | 本地离线 OCR 核心 | 遵循 deepseek-ai 官方许可证 | 仅运行时依赖，按官方要求使用/署名 |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp)（预编译 `llama-server`） | 本地推理引擎（默认后端） | MIT | 仅下载二进制，不修改/不打包源码 |
+| [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) | GUI 框架 | **GPLv3 或商业许可** | ⚠️ 若分发打包后的 GUI 程序，PyQt6 的 GPLv3 会要求整体按 GPLv3 开源；如需闭源分发 GUI，请改用 PySide6（LGPL） |
+| PyMuPDF / Pillow / python-docx / markdown / requests | 文档/图片处理与 HTTP 客户端 | 各自宽松许可证（MIT 等） | 经由 pip 安装，非本仓库内置 |
+
+> 提示：若你修改并分发本工具，请保留上述 MIT 许可声明，并按上游各自许可证要求保留其版权/署名信息。

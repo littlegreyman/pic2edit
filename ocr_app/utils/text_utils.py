@@ -20,18 +20,28 @@ This module detects and removes that trailing loop. Two signals are used:
   the real content once, then regurgitates an entire *block* (hundreds of chars)
   exactly once at the end (e.g. re-lists the whole license block after the real
   ending). This has no bracket-year switch and isn't a tight periodic loop, so
-  A/B miss it. Signal C detects a long duplicated tail and cuts it. Guards
-  (min length + min ratio + the earlier copy must sit fully before the tail)
-  keep it from trimming legitimate short repeats.
+  A/B miss it. Signal C detects a long duplicated tail (verbatim) and cuts it.
+
+  Signal D (fallback for a *paraphrased* restart): the model sometimes restarts
+  the whole document but changes the very first field (产品名称 -> 企业名称), so
+  the block is no longer verbatim and C's anchored match misses it. Signal D
+  detects a *document restart* by re-appearing "key：" anchors (a key that shows
+  up 2-3 times overall, with one in the head and the last in the tail) and cuts
+  from the last occurrence.
 
   Either way we cut at the loop's true start, so the entire loop -- including its
   first cycle -- is discarded and the real content is preserved.
 """
 import re
+from collections import Counter
 
 _BRACKET_YEAR = re.compile(r"\[20\d\d\]")
 _LICENSE_MARK = "生产企业卫生许可证号："
 _WS = re.compile(r"\s+")
+# 一个“键：”模式：中文/字母/数字/括号/斜杠连成的 1-20 字符，后接全角冒号。
+# 用于重启检测——价值文本里的“（代码：F）”之类也会被误抓成“代码”，但那种键
+# 出现极频繁（>=4 次）会被当成通用键排除。
+_KEY_RE = re.compile(r"([\u4e00-\u9fffA-Za-z0-9（）()／/\-]{1,20})：")
 
 
 def _norm_to_raw(text):
@@ -140,4 +150,57 @@ def trim_trailing_repetition(text, bracket_year_min=3, min_reps=3):
     dup_len = _dup_tail(text)
     if dup_len:
         return text[: len(text) - dup_len].rstrip()
+
+    # --- Signal D: 模型“重启”重列（开头换了词，如 产品名称→企业名称）--------
+    # 这种退化块首不一致，C 的精确锚点匹配抓不到；改用“键”重出现来识别：
+    # 若某个开头区域内的“键”在全文恰好又出现（2~3 次，排除通用高频键如 地址），
+    # 且最后一次落在尾部，即可判定模型从头重列，从最后一次出现处裁掉。
+    restarted = _trim_restart_by_key(text)
+    if restarted is not text:
+        return restarted
+    return text
+
+
+def _trim_restart_by_key(text, head_frac=0.25, tail_frac=0.5, generic_max=4, boundary_gap=17):
+    """Cut a *document restart* where the model begins re-listing from near the
+    top but may paraphrase the very first field (e.g. 产品名称 -> 企业名称).
+
+    Strategy: scan "key：" anchors. A key that appears exactly 2-3 times overall
+    (so it is not a generic high-frequency key like 地址/许可证号) AND appears in
+    the head region AND whose last occurrence sits in the tail is a strong signal
+    the model restarted. Once proven, walk backward from that last occurrence to
+    the nearest *block boundary* (a gap to the previous key larger than the local
+    in-cluster gaps) -- that boundary is the genuine/restlist seam -- and cut from
+    the first key after it, so the whole regurgitated block (including any
+    paraphrased header) is removed.
+    """
+    n = len(text)
+    if n < 200:
+        return text
+    keys = [(m.start(), m.group(1)) for m in _KEY_RE.finditer(text)]
+    if not keys:
+        return text
+    cnt = Counter(k for _, k in keys)
+    head_end = int(n * head_frac)
+    tail_start = int(n * tail_frac)
+    for k, c in cnt.items():
+        if c < 2 or c > generic_max:
+            continue  # 只在“又出现 2~3 次、非通用高频键”时考虑
+        positions = [p for p, kk in keys if kk == k]
+        last = positions[-1]
+        if last >= tail_start and any(p < head_end for p in positions):
+            sp = sorted(p for p, _ in keys)
+            try:
+                i = sp.index(last)
+            except ValueError:
+                continue
+            s = last
+            prev = None
+            for j in range(i, -1, -1):
+                if prev is not None:
+                    if prev - sp[j] > boundary_gap:
+                        s = prev  # 边界后的第一个键才是重列起点
+                        break
+                prev = sp[j]
+            return text[:s].rstrip()
     return text

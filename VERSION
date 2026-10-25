@@ -1,16 +1,27 @@
-pic2edit 0.1 (alpha)
+pic2edit 0.15 (alpha)
 ========================
-本地离线图片转可编辑文档工具 —— 首个可工作里程碑版本（alpha 0.1）。
+本地离线图片转可编辑文档工具 —— alpha 0.15 里程碑。
 
 核心能力：
 - DeepSeek-OCR 本地离线 OCR，把 jpg/tif/pdf 转可编辑 Markdown。
 - 三后端可切换（默认 llama_cpp）：llama.cpp（官方预编译 llama-server + Q4_K_M GGUF，最省显存）、Ollama、Transformers（独立 Python 3.11 常驻服务）。
 - PyQt6 双栏 GUI（左待转换、右可编辑），支持导出 .docx/.md/.txt。
 - 输入：PDF 整页渲染 + 抽取内嵌图形；TIF 多帧拆分；统一落地临时 PNG。
+- 输出格式下拉（主窗口工具栏）：Markdown / 纯文本 OCR / 图表公式 / 表格（键值→表）。
 - 验证：_smoke_test.py（无界面端到端）、verify_backend.py（契约 mock + --live 真机 OCR）。
+
+alpha 0.15 相对 0.1 的变更：
+- 生成参数级修退化：请求 payload 固定 temperature=0（贪心/确定性）+ repeat_penalty=1.10
+  + repeat_last_n=4096（放大到 4096 才能真正抑制“整篇从头重列”长程复读）+ max_tokens=16384；
+  llama.cpp 启动器新增 --repeat-penalty 1.10 --repeat-last-n 4096 双重兜底。
+  根因：temp>0 会随机退化（同参数干净/崩成重复上百次）；默认 repeat_last_n=64 够不到长程循环。
+- 客户端 trim_trailing_repetition 保留作兜底（Signal A/B/C）。
+- GUI 主窗口新增可见“输出格式”下拉；状态框文字改为蓝色（解决暗色主题下白字看不见）。
+- 新增表格键值→表后处理（kv_text_to_markdown_table）+ 单测。
+- 合规：新增 MIT LICENSE 与 README 第三方署名章节；移除源码中硬编码的个人路径（改用
+  PIC2EDIT_CLINIC 环境变量覆盖），避免泄漏本机用户名。
 
 关键坑（已解决）：
 - llama.cpp 服务端**绝不能**加 --chat-template deepseek-ocr（裸模板不自动注入 media marker、不绑视觉，必 400/废话）；让 llama.cpp 自动选原生 deepseek-ocr 模板，客户端发 image_url 块 + 纯提示词（不含任何 marker）即可。
 
-状态：alpha 0.1 = 后端/启动器/契约/文档/测试全部就位，真机（无 flag 服务端）已验证返回真实 OCR。
-GUI 改动按早期约定暂缓至“真文本出来后”，本次后端接口签名未变，GUI 无需改动即可对接。
+状态：alpha 0.15 = 后端参数优化/表格模式/合规与隐私清理全部就位。
