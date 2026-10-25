@@ -1,6 +1,10 @@
 # pic2edit
 
 <p align="center">
+  <img src="pic2edit-logo.png" alt="pic2edit logo" width="160">
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/Offline-100%25-brightgreen.svg" alt="Offline">

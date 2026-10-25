@@ -4,7 +4,7 @@ import tempfile
 import logging
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
-from PyQt6.QtGui import QPixmap, QFont
+from PyQt6.QtGui import QPixmap, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QListWidgetItem, QLabel, QTextEdit, QTextBrowser, QTabWidget,
@@ -131,6 +131,14 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.work_dir = tempfile.mkdtemp(prefix="pic2edit_")
         self.backend = self._build_backend()
+
+        # 窗口图标（项目根目录的 logo；打包后资源路径另行处理）
+        icon_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "pic2edit-logo.png",
+        )
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         self.setWindowTitle("图片转可编辑文档（DeepSeek-OCR 本地离线）")
         self.resize(1100, 720)

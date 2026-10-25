@@ -19,6 +19,11 @@ bin/
 *.log
 pic2edit.log
 
+# 项目 logo 资源（需纳入版本管理，例外于上面的 *.png / *.jpg）
+!pic2edit-logo.png
+!pic2edit-logo-transparent.png
+!pic2edit-logo-horizontal.png
+
 # 操作系统 / 编辑器
 Thumbs.db
 .DS_Store
