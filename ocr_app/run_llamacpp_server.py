@@ -88,10 +88,13 @@ def build_command(exe, model, mmproj):
     # NOTE: intentionally NOT passing --chat-template. The bare "deepseek-ocr"
     # template breaks multimodal (no auto marker / no vision binding). Let
     # llama.cpp pick the model's native template, which works correctly.
+    # --repeat-penalty 1.05: DeepSeek-OCR 在密集页面 + 贪心解码下极易“复读”
+    # 死循环（最后一行无限重复直到 max_tokens 耗尽）。默认 1.0 不惩罚重复必触发；
+    # 1.05 可靠止住且基本不影响 OCR 质量。
     cmd = [exe, "-m", model]
     if mmproj:
         cmd += ["--mmproj", mmproj]
-    cmd += ["--host", "127.0.0.1", "--port", PORT]
+    cmd += ["--repeat-penalty", "1.05", "--host", "127.0.0.1", "--port", PORT]
     return cmd
 
 

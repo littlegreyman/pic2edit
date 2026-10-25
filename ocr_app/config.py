@@ -31,6 +31,11 @@ PROMPT_TEMPLATES = {
     "markdown": "<|grounding|>Convert the document to markdown.",
     "ocr":      "Free OCR.",
     "figure":   "Parse the figure.",
+    # “表格”模式：模型对真表格会原生输出 Markdown 表格，但对“键：值”类
+    # 版式（包装标签/证照）任何提示词都无法让它输出表格（实测），所以该
+    # 模式用 markdown 提示词正常 OCR，再由 utils/table_utils.py 做确定性
+    # 键值→表格 后处理（worker 按 prompt_template == "table" 触发）。
+    "table":    "<|grounding|>Convert the document to markdown.",
 }
 
 

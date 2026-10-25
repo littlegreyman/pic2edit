@@ -29,6 +29,7 @@ import requests
 
 from .base import OCRBackend
 from utils.logging_setup import get_logger
+from utils.text_utils import trim_trailing_repetition
 
 _logger = get_logger("backends.llamacpp")
 
@@ -68,6 +69,11 @@ class LlamaCppBackend(OCRBackend):
             "model": self.model,
             "messages": messages,
             "temperature": 0.0,
+            # 关键：DeepSeek-OCR 在密集页面 + 贪心解码下极易“复读”死循环
+            # （把最后一行无限重复直到 max_tokens 耗尽）。repeat_penalty=1.0（默认）
+            # 不惩罚重复，必触发。设 1.05 即可可靠止住复读且基本不影响 OCR 质量。
+            # 即便服务端启动没带 --repeat-penalty，请求里带也能覆盖默认，立即生效。
+            "repeat_penalty": 1.05,
             "max_tokens": 8192,
         }
         url = self.base_url + "/v1/chat/completions"
@@ -122,4 +128,10 @@ class LlamaCppBackend(OCRBackend):
         # 不要 GET /props 的 media_marker）——多写一个就会变成“2 markers vs 1 bitmap”
         # 直接 400。这是用真实服务端（build b11853）反复验证过的结论。
         messages = self._build_messages(prompt, b64)
-        return self._chat(messages)
+        raw = self._chat(messages)
+        # DeepSeek-OCR 在密集页面 + 贪心解码下会陷入“复读”死循环（同一行/同一块
+        # 无限重复直到 max_tokens 耗尽）。repeat_penalty 只能缓解、无法根治，所以这里
+        # 再加一道客户端兜底：检测并裁掉尾部循环。实测 tempo_package.jpg 上能把 10273
+        # 字符的复读结果裁成完整干净的 ~600 字符真实 OCR（真实内容用全角括号（20xx），
+        # 循环体用方括号 [20xx]，首个方括号即循环起点）。
+        return trim_trailing_repetition(raw)

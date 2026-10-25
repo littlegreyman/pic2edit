@@ -339,7 +339,10 @@ class MainWindow(QMainWindow):
             return
         self.progress.setVisible(True)
         self.progress.setValue(0)
-        self.worker = OcrWorker(self.backend, self.items, self.cfg.prompt(), indices)
+        self.worker = OcrWorker(
+            self.backend, self.items, self.cfg.prompt(), indices,
+            as_table=(self.cfg.prompt_template == "table"),
+        )
         self.worker.progress.connect(self._on_progress)
         self.worker.item_done.connect(self._on_item_done)
         self.worker.finished.connect(self._on_finished)
