@@ -2,10 +2,9 @@
 
 DeepSeek-OCR (and greedy-decoded LLMs in general) can fall into a *degenerate
 repetition loop* on dense pages: it emits the real content once, then fixates on
-a short block and repeats it until max_tokens is exhausted (the symptom the user
-saw: one license line printed ~200 times).
+a short block and repeats it until max_tokens is exhausted.
 
-This module detects and removes that trailing loop. Two signals are used:
+This module detects and removes that trailing loop. Several signals are used:
 
   Signal A (primary, very reliable for this model): the model switches its year
   notation to SQUARE BRACKETS (``[2021]``) only once it enters the loop, while
@@ -23,8 +22,8 @@ This module detects and removes that trailing loop. Two signals are used:
   A/B miss it. Signal C detects a long duplicated tail (verbatim) and cuts it.
 
   Signal D (fallback for a *paraphrased* restart): the model sometimes restarts
-  the whole document but changes the very first field (产品名称 -> 企业名称), so
-  the block is no longer verbatim and C's anchored match misses it. Signal D
+  the whole document but paraphrases the opening field, so the block is no longer
+  verbatim and C's anchored match misses it. Signal D
   detects a *document restart* by re-appearing "key：" anchors (a key that shows
   up 2-3 times overall, with one in the head and the last in the tail) and cuts
   from the last occurrence.
@@ -151,9 +150,9 @@ def trim_trailing_repetition(text, bracket_year_min=3, min_reps=3):
     if dup_len:
         return text[: len(text) - dup_len].rstrip()
 
-    # --- Signal D: 模型“重启”重列（开头换了词，如 产品名称→企业名称）--------
-    # 这种退化块首不一致，C 的精确锚点匹配抓不到；改用“键”重出现来识别：
-    # 若某个开头区域内的“键”在全文恰好又出现（2~3 次，排除通用高频键如 地址），
+    # --- Signal D: 模型“重启”重列（开头字段被改写，导致块首不再逐字一致）--------
+    # 这种退化 C 的精确锚点匹配抓不到；改用“键”重出现来识别：
+    # 若某个“键”在全文恰好又出现（2~3 次，排除通用高频键如 地址），
     # 且最后一次落在尾部，即可判定模型从头重列，从最后一次出现处裁掉。
     restarted = _trim_restart_by_key(text)
     if restarted is not text:
@@ -163,14 +162,14 @@ def trim_trailing_repetition(text, bracket_year_min=3, min_reps=3):
 
 def _trim_restart_by_key(text, head_frac=0.25, tail_frac=0.5, generic_max=4, boundary_gap=17):
     """Cut a *document restart* where the model begins re-listing from near the
-    top but may paraphrase the very first field (e.g. 产品名称 -> 企业名称).
+    top but paraphrases the opening field, so the block is no longer verbatim.
 
     Strategy: scan "key：" anchors. A key that appears exactly 2-3 times overall
     (so it is not a generic high-frequency key like 地址/许可证号) AND appears in
     the head region AND whose last occurrence sits in the tail is a strong signal
     the model restarted. Once proven, walk backward from that last occurrence to
     the nearest *block boundary* (a gap to the previous key larger than the local
-    in-cluster gaps) -- that boundary is the genuine/restlist seam -- and cut from
+    in-cluster gaps) -- that boundary is the genuine restart seam -- and cut from
     the first key after it, so the whole regurgitated block (including any
     paraphrased header) is removed.
     """

@@ -16,7 +16,6 @@ bin/
 # 临时 / 生成产物
 *.png
 *.jpg
-clinic_form_001.png
 *.log
 pic2edit.log
 
