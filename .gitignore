@@ -1,0 +1,25 @@
+# ===== pic2edit 项目快照忽略规则 =====
+# 模型权重（多 GB，由 download_models 脚本下载，不入库）
+models/
+
+# llama.cpp 官方预编译引擎 + CUDA 运行库（约 1GB+，由下载脚本落地）
+bin/
+
+# Python 虚拟环境
+.venv/
+**/__pycache__/
+*.pyc
+
+# WorkBuddy 项目记忆 / 运行数据（非源码）
+.workbuddy/
+
+# 临时 / 生成产物
+*.png
+*.jpg
+clinic_form_001.png
+*.log
+pic2edit.log
+
+# 操作系统 / 编辑器
+Thumbs.db
+.DS_Store

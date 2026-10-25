@@ -1,0 +1,13 @@
+# 图片转可编辑文档 - 本地离线 OCR 应用依赖
+# 主程序（GUI + Ollama 后端 + PDF/TIF 处理 + 导出）运行在 Python 3.10+（含 3.13）
+PyQt6>=6.6
+PyMuPDF>=1.24
+Pillow>=10.0
+requests>=2.31
+markdown>=3.5
+python-docx>=1.1
+huggingface_hub>=0.23   # used by download_models.bat to pull GGUF models
+
+# 注意：Transformers 后端需要独立的 Python 3.11 环境（避开 3.13 缺 wheel 的问题），
+# 并在该环境中额外安装：torch(torchvision) + transformers + accelerate + bitsandbytes + einops + sentencepiece
+# 详见 README.md 的“Transformers 后端”一节。

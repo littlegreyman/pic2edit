@@ -1,0 +1,13 @@
+# Transformers 后端专用依赖（独立 Python 3.11 虚拟环境）
+# 说明：transformers + bitsandbytes 在 Python 3.13 上缺少预编译 wheel，
+# 建议用 Python 3.11 创建独立 venv 安装本文件，并在“设置”里把该 venv 的
+# python 解释器路径填到“Transformers 后端 -> Python 解释器”。
+# torch 的 CUDA 版本需与本机显卡驱动匹配，下方为 cu118 示例。
+torch==2.6.0
+torchvision==0.21.0
+transformers>=4.51.1
+accelerate
+bitsandbytes
+einops
+sentencepiece
+Pillow
