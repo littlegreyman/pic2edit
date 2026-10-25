@@ -1,3 +1,5 @@
+> 项目总览、功能特性与快速开始请看仓库根目录 [README.md](../README.md)；本文为技术细节深读。
+
 # 图片转可编辑文档（DeepSeek-OCR 本地离线）
 
 把 `jpg / jpeg / tif / tiff / pdf` 中的图文转换成**可编辑的 Markdown 文档**，并支持导出 `.docx / .md / .txt`。  
