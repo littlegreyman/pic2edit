@@ -10,8 +10,8 @@ bin/
 **/__pycache__/
 *.pyc
 
-# WorkBuddy 项目记忆 / 运行数据（非源码）
-.workbuddy/
+# WorkBuddy 项目记忆 / 运行数据（非源码，skills 源码除外）
+.workbuddy/memory/
 
 # 临时 / 生成产物
 *.png
