@@ -1,6 +1,6 @@
-pic2edit 0.16 (alpha)
+pic2edit 0.17 (alpha)
 ========================
-本地离线图片转可编辑文档工具 —— alpha 0.16 里程碑。
+本地离线图片转可编辑文档工具 —— alpha 0.17 里程碑。
 
 alpha 0.16 相对 0.15 的变更：
 - 新增判别式 OCR 优先流水线（RapidOCR 子环境 .venv_ocr），对清晰印刷体零幻觉；
@@ -12,7 +12,7 @@ alpha 0.16 相对 0.15 的变更：
 核心能力：
 - DeepSeek-OCR 本地离线 OCR，把 jpg/tif/pdf 转可编辑 Markdown。
 - 三后端可切换（默认 llama_cpp）：llama.cpp（官方预编译 llama-server + Q4_K_M GGUF，最省显存）、Ollama、Transformers（独立 Python 3.11 常驻服务）。
-- PyQt6 双栏 GUI（左待转换、右可编辑），支持导出 .docx/.md/.txt。
+- PySide6 双栏 GUI（左待转换、右可编辑），支持导出 .docx/.md/.txt。
 - 输入：PDF 整页渲染 + 抽取内嵌图形；TIF 多帧拆分；统一落地临时 PNG。
 - 输出格式下拉（主窗口工具栏）：Markdown / 纯文本 OCR / 图表公式 / 表格（键值→表）。
 - 验证：_smoke_test.py（无界面端到端）、verify_backend.py（契约 mock + --live 真机 OCR）。

@@ -1,11 +1,11 @@
-"""PyQt6 主界面：左侧待转换文件（列表+预览），右侧可编辑 Markdown（编辑/预览）+ 导出。"""
+"""PySide6 主界面：左侧待转换文件（列表+预览），右侧可编辑 Markdown（编辑/预览）+ 导出。"""
 import os
 import tempfile
 import logging
 
-from PyQt6.QtCore import Qt, pyqtSignal, QObject
-from PyQt6.QtGui import QPixmap, QFont, QIcon
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtGui import QPixmap, QFont, QIcon
+from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QListWidgetItem, QLabel, QTextEdit, QTextBrowser, QTabWidget,
     QToolBar, QFileDialog, QMessageBox, QProgressBar, QPushButton, QDialog,
@@ -26,7 +26,7 @@ _logger = get_logger("gui")
 
 class LogEmitter(QObject):
     """Bridge logging records to the Qt world via a signal (thread-safe)."""
-    sig = pyqtSignal(str)
+    sig = Signal(str)
 
 
 class GuiLogHandler(logging.Handler):

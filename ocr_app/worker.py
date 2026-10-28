@@ -1,5 +1,5 @@
 """后台 OCR 工作线程：避免界面卡顿。"""
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from backends.base import OCRBackend
 from utils.input_prep import InputItem
@@ -10,10 +10,10 @@ _logger = get_logger("worker")
 
 
 class OcrWorker(QThread):
-    progress = pyqtSignal(int, int, str)   # 当前序号, 总数, 名称
-    item_done = pyqtSignal(int, str)        # 序号, 文本
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
+    progress = Signal(int, int, str)   # 当前序号, 总数, 名称
+    item_done = Signal(int, str)        # 序号, 文本
+    finished = Signal()
+    error = Signal(str)
 
     def __init__(self, backend: OCRBackend, items: list, prompt: str, indices: list,
                  as_table: bool = False):

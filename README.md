@@ -30,7 +30,7 @@ Everything runs on your machine — no cloud, no uploads.
   - **llama.cpp（默认、最轻量）**：官方预编译 `llama-server` + 量化 GGUF（Q4_K_M 约 2GB，最省显存，适配 8GB 显卡）。
   - **Ollama（可选）**：`ollama pull deepseek-ocr` 后用本机 Ollama 推理（需注意官方模型为 6.7GB F16）。
   - **Transformers（可选）**：本地 HF 官方模型 + 4/8bit 量化，常驻显存，连续多页转换很快。
-- **PyQt6 双栏 GUI**：左侧待转换列表 / 图像预览，右侧可编辑 Markdown（编辑 / 预览双模式），一键导出 `.md / .docx / .txt`。
+- **PySide6 双栏 GUI**：左侧待转换列表 / 图像预览，右侧可编辑 Markdown（编辑 / 预览双模式），一键导出 `.md / .docx / .txt`。
 - **四种输出格式**：Markdown（默认） / 纯文本 OCR / 图表·公式 / 表格（键值→表）。
 - **针对密集页面退化做了参数调优**：贪心解码 + 长程重复惩罚，稳定不崩、不截断（详见[关键技术要点](#关键技术要点)）。
 - **跨平台**：Windows / Linux / macOS（启动与下载脚本均提供 `.bat` 与 `.sh`）。
@@ -46,7 +46,7 @@ pic2edit/
 ├── .gitignore
 └── ocr_app/                # 应用主体
     ├── main.py             # 入口
-    ├── gui.py              # PyQt6 双栏主界面 + 输出格式下拉 + 运行状态面板
+    ├── gui.py              # PySide6 双栏主界面 + 输出格式下拉 + 运行状态面板
     ├── config.py           # 配置（后端/模型/分辨率/提示词），持久化到 ~/.pic2edit
     ├── worker.py           # 后台 OCR 线程
     ├── requirements.txt    # 主程序依赖
@@ -88,7 +88,7 @@ setup_venv.bat        :: Windows
 cd ocr_app
 ./setup_venv.sh       :: Linux / macOS
 ```
-这会在 `ocr_app/.venv` 创建虚拟环境并安装主程序依赖（PyQt6 / pypdfium2 / Pillow / python-docx / markdown / requests / huggingface_hub）。
+这会在 `ocr_app/.venv` 创建虚拟环境并安装主程序依赖（PySide6 / pypdfium2 / Pillow / python-docx / markdown / requests / huggingface_hub）。
 
 ### 3. 下载推理引擎与模型（只需一次，之后可离线）
 
@@ -206,7 +206,7 @@ DeepSeek-OCR 在 llama.cpp 上的**原生模板会自动注入 media marker** �
 
 本项目**不打包、不内置**任何模型权重或第三方二进制：DeepSeek-OCR 模型与 llama.cpp 引擎均在**运行时**从官方来源下载到本地。上游组件的许可证与署名细节见 [`ocr_app/README.md`](ocr_app/README.md) 的“许可证与第三方署名”一节。
 
-> ⚠️ **注意**：GUI 框架 PyQt6 采用 **GPLv3 或商业许可**。若你分发**打包后的 GUI 程序**，PyQt6 的 GPLv3 会要求整体按 GPLv3 开源；如需闭源分发 GUI，请改用 PySide6（LGPL）。
+> ℹ️ **许可证说明**：GUI 框架已采用 **PySide6（LGPL-3.0，Qt 官方绑定）**，可闭源/商业分发（动态链接 Qt）。结合默认判别式 OCR 路径（pypdfium2 + RapidOCR 系列，均为 MIT/Apache-2.0/BSD），**本项目整体可按 MIT License 分发，含打包后的 GUI 二进制**。
 
 ---
 
@@ -214,7 +214,7 @@ DeepSeek-OCR 在 llama.cpp 上的**原生模板会自动注入 media marker** �
 
 - [DeepSeek-OCR](https://github.com/deepseek-ai/DeepSeek-OCR) —— 本地离线 OCR 核心模型。
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) —— 轻量本地推理引擎。
-- [pypdfium2](https://github.com/pypdfium2/pypdfium2) / [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) / [python-docx](https://github.com/python-openxml/python-docx) 等开源依赖。
+- [pypdfium2](https://github.com/pypdfium2/pypdfium2) / [PySide6](https://doc.qt.io/qtforpython/) / [python-docx](https://github.com/python-openxml/python-docx) 等开源依赖。
 
 ---
 

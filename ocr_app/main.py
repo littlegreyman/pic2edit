@@ -1,7 +1,7 @@
 """程序入口。"""
 import sys
 
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 
 from gui import MainWindow
 from utils.logging_setup import setup_logging

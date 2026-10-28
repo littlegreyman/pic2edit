@@ -8,9 +8,9 @@ pic2edit 自身源码以 MIT License 发布（见根目录 LICENSE）。
 
 主程序依赖（ocr_app/requirements.txt）
 --------------------------------------
-- PyQt6 (>=6.6)            — GPL-3.0-or-commercial (Riverbank Computing Ltd.)
-                            注意：分发含 PyQt6 的 GUI 二进制须整体按 GPLv3 开源；
-                            如需闭源分发 GUI，请改用 PySide6（LGPL-3.0）。
+- PySide6 (>=6.6)         — LGPL-3.0 / 商业许可（The Qt Company，Qt 官方 Python 绑定）
+                            PySide6 为 LGPL-3.0，可闭源/商业分发 GUI（动态链接 Qt）；
+                            本项目 GUI 已采用 PySide6，故整体可保持 MIT 兼容分发。
 - pypdfium2 (>=4.0)        — Apache-2.0（PDF 渲染后端，基于 PDFium）
 - Pillow (>=10.0)          — MIT-CMU / HPND
 - requests (>=2.31)        — Apache-2.0
@@ -49,10 +49,8 @@ Transformers 后端依赖（ocr_app/requirements_tf.txt，独立 Python 3.11 环
 许可兼容性说明
 --------------
 源码以 MIT License 发布。默认判别式 OCR 路径（pypdfium2 + RapidOCR 系列）
-全部为 MIT / Apache-2.0 / BSD，与 MIT 完全兼容。唯一与 MIT 不兼容的是 GUI
-框架 PyQt6（GPL-3.0）：若仅以源码形式分发、或将 GUI 改为 PySide6（LGPL-3.0），
-则整体可保持 MIT 兼容分发；若打包分发含 PyQt6 的 GUI 二进制，则该二进制须
-按 GPL-3.0 开源。
+全部为 MIT / Apache-2.0 / BSD，与 MIT 完全兼容；GUI 框架 PySide6 为 LGPL-3.0，
+亦与 MIT 兼容分发一致。因此本项目整体可按 MIT License 分发（含打包后的 GUI 二进制）。
 
 本项目历史上曾使用 PyMuPDF（AGPL-3.0，与 MIT 不兼容）做 PDF 渲染，已在
 0.16 版本替换为 pypdfium2（Apache-2.0），以消除 AGPL 合规冲突。
