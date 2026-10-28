@@ -14,32 +14,71 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OCR_VENV = os.path.join(HERE, "..", ".venv_ocr")
 CLI = os.path.join(HERE, "..", "_rapidocr_cli.py")
 
-# 章节/条文/条款 标题：与后续正文应同行、以两个空格相接
-_HEADER_RE = re.compile(r"^第[0-9一二三四五六七八九十百千]+[章节目条]")
+# 章节/节 标题（独立成段；标题内各检测框以两个空格相接）
+_HEADING_RE = re.compile(r"^第[0-9一二三四五六七八九十百千]+[章节目]")
+# 条文（同段：条文号 + 两个空格 + 正文）
+_ARTICLE_RE = re.compile(r"^第[0-9一二三四五六七八九十百千]+条")
+# 任一结构标题（章/节/条/目）都另起一段
+_STRUCT_RE = re.compile(r"^第[0-9一二三四五六七八九十百千]+[章节目条]")
+# 规整：章/节/条/目 号后若紧跟非空白则补两个空格（幂等）
+_NORM_RE = re.compile(r"^(第[0-9一二三四五六七八九十百千]+[章节目条])(?=\S)")
+
+
+def _norm_spacing(text):
+    """条文号 / 章节号后若紧跟非空白字符，补两个空格（符合公文排版，且幂等）。"""
+    return _NORM_RE.sub(lambda m: m.group(1) + "  ", text)
+
+
+def _group_rows(lines):
+    """按 y 波段把检测框聚成视觉行；行内按 x0 从左到右（修“第一章/总则”顺序）。
+
+    返回 [{"text","y0","y1"}]，已按阅读顺序排列。
+    """
+    if not lines:
+        return []
+    hs = [max(l["y1"] - l["y0"], 1) for l in lines]
+    band = max(6.0, 0.6 * sorted(hs)[len(hs) // 2])  # 行高约 60% 作为同行判定带宽
+    rows = {}
+    for l in lines:
+        rows.setdefault(round(l["y0"] / band), []).append(l)
+    ordered = []
+    for key in sorted(rows):
+        grp = sorted(rows[key], key=lambda l: l["x0"])
+        if _HEADING_RE.match(grp[0]["text"].strip()):
+            txt = "  ".join(g["text"].strip() for g in grp)
+        else:
+            txt = "".join(g["text"].strip() for g in grp)
+        ordered.append({
+            "text": txt,
+            "y0": min(g["y0"] for g in grp),
+            "y1": max(g["y1"] for g in grp),
+        })
+    return ordered
 
 
 def assemble_markdown(lines, H=0):
-    """将判别式 OCR 的逐行结果按几何间距重组为段落，消除误换行。
+    """将判别式 OCR 的逐行结果重组为段落，消除误换行与顺序错乱。
 
-    - 行间垂直间距 <= ~0.8 行高 -> 视为同一段落（中文连续拼接，不插空格）
-    - 段落首行若为“第X章/条/节/目”标题 -> 标题与正文之间用两个空格连接
+    - 先按 y 波段聚成视觉行，行内按 x0 从左到右（修“第一章/总则”顺序）
+    - 任何结构标题（第X章/节/条/目）都另起一段（章/节标题独立成段，
+      条文号与正文同行）
+    - 行间距 <= ~0.8 行高 -> 同一段落（中文连续拼接，不插空格）
+    - 条文号 / 章节号后补两个空格
     - 段落之间用空行分隔
-    入参 lines 需已按 (y0, x0) 排序。
     """
-    if not lines:
+    rows = _group_rows(lines)
+    if not rows:
         return ""
     paras = []
-    cur = [lines[0]]
-    for prev, nxt in zip(lines, lines[1:]):
-        gap = nxt["y0"] - prev["y1"]
-        h_prev = max(prev["y1"] - prev["y0"], 1)
-        h_nxt = max(nxt["y1"] - nxt["y0"], 1)
-        h = max(h_prev, h_nxt)
-        # 标题续接：上一行是章节/条标题，则无论间距都并入同一段落
-        if _HEADER_RE.match(prev["text"].strip()):
-            cur.append(nxt)
+    cur = [rows[0]]
+    for prev, nxt in zip(rows, rows[1:]):
+        # 任何结构标题都另起一段：直接断段
+        if _STRUCT_RE.match(nxt["text"]):
+            paras.append(cur)
+            cur = [nxt]
             continue
-        # 行内小间距（约 <=0.8 行高）视为同一段落的换行续接
+        gap = nxt["y0"] - prev["y1"]
+        h = max(max(prev["y1"] - prev["y0"], 1), max(nxt["y1"] - nxt["y0"], 1))
         if gap <= 0.8 * h:
             cur.append(nxt)
         else:
@@ -49,15 +88,11 @@ def assemble_markdown(lines, H=0):
 
     out = []
     for p in paras:
-        texts = [l["text"].strip() for l in p]
-        texts = [t for t in texts if t]
+        texts = [r["text"] for r in p if r["text"].strip()]
         if not texts:
             continue
-        if _HEADER_RE.match(texts[0]):
-            # 标题 + 两个空格 + 正文（正文各行连续拼接，不插空格）
-            out.append(texts[0] + "  " + "".join(texts[1:]))
-        else:
-            out.append("".join(texts))
+        # 段落内所有行连续拼接，再统一规整条文/章节号后的两个空格
+        out.append(_norm_spacing("".join(texts)))
     return "\n\n".join(out)
 
 
@@ -114,5 +149,4 @@ class DiscriminativeBackend:
             if re.fullmatch(r"\s*\d+\s*/\s*\d+\s*", ln["text"]):
                 continue
             keep.append(ln)
-        keep.sort(key=lambda l: (round(l["y0"]), l["x0"]))
         return assemble_markdown(keep, H)
