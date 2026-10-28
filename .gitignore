@@ -7,6 +7,7 @@ bin/
 
 # Python 虚拟环境
 .venv/
+.venv_ocr/
 **/__pycache__/
 *.pyc
 

@@ -99,6 +99,9 @@ def build_command(exe, model, mmproj):
     if mmproj:
         cmd += ["--mmproj", mmproj]
     cmd += ["--repeat-penalty", "1.10", "--repeat-last-n", "4096",
+            # 关闭 KV 状态缓存复用：连发多页时缓存区易被大块多模态状态占满，
+            # 触发 "failed to restore kv cache"；请求会回退重算但日志报错且拖慢。
+            "--cache-reuse", "0",
             "--host", "127.0.0.1", "--port", PORT]
     return cmd
 

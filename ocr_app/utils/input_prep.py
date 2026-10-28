@@ -66,9 +66,14 @@ def prepare_pdf(path: str, work_dir: str, dpi: int = 200) -> list:
         dst = os.path.join(work_dir, _safe_name(f"{base}_page", i + 1))
         pix.save(dst)
         items.append(InputItem(f"{name} - 第{i + 1}页", dst, path))
-    # 2) 抽取内嵌图像（即“pdf 中的图形”）
+    # 2) 抽取内嵌图像（即“pdf 中的图形”）——只保留“大尺寸/独立”插图，
+    #    跳过 logo / 装饰 / 页码类小图。这些小图被 VLM 读不到文字时会脑补成
+    #    英文废话（章程 PDF 曾因此混入 ~35% 垃圾段），是必须修的 bug。
     img_index = 0
     for i, page in enumerate(doc):
+        pw = page.rect.width * dpi / 72.0   # 渲染后页面像素宽
+        ph = page.rect.height * dpi / 72.0  # 渲染后页面像素高
+        page_area = pw * ph
         for img in page.get_images(full=True):
             img_index += 1
             try:
@@ -76,6 +81,10 @@ def prepare_pdf(path: str, work_dir: str, dpi: int = 200) -> list:
                 pix = fitz.Pixmap(doc, xref)
                 if pix.n - pix.alpha >= 4:  # CMYK 转 RGB
                     pix = fitz.Pixmap(fitz.csRGB, pix)
+                fig_area = pix.width * pix.height
+                # 面积占比过小（装饰/logo/页码）或非独立小图 -> 跳过
+                if fig_area / page_area < 0.30 or min(pix.width, pix.height) < 200:
+                    continue
                 dst = os.path.join(work_dir, _safe_name(f"{base}_fig", img_index))
                 pix.save(dst)
                 items.append(

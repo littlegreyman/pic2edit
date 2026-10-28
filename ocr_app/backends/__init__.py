@@ -6,5 +6,8 @@ from .base import OCRBackend
 from .ollama_backend import OllamaBackend
 from .transformers_backend import TransformersBackend
 from .llamacpp_backend import LlamaCppBackend
+from .discriminative_backend import DiscriminativeBackend
+from .table_backend import TableRecognizer
 
-__all__ = ["OCRBackend", "OllamaBackend", "TransformersBackend", "LlamaCppBackend"]
+__all__ = ["OCRBackend", "OllamaBackend", "TransformersBackend", "LlamaCppBackend",
+           "DiscriminativeBackend", "TableRecognizer"]

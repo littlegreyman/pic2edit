@@ -53,6 +53,8 @@ from utils.input_prep import prepare_input                      # noqa: E402
 from utils.export_docx import save_text, md_to_docx              # noqa: E402
 from utils.table_utils import kv_text_to_markdown_table         # noqa: E402
 from backends.llamacpp_backend import LlamaCppBackend           # noqa: E402
+from backends.discriminative_backend import DiscriminativeBackend  # noqa: E402
+from backends.ocr_pipeline import run as pipeline_run               # noqa: E402
 import run_llamacpp_server as launcher                           # noqa: E402
 
 PORT = "8080"
@@ -113,16 +115,27 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server):
         sys.stderr.write(f"[error] 输入文件不存在: {input_path}\n")
         sys.exit(2)
 
-    backend, proc = ensure_server(url, gpu_layers)
+    # 判别式后端可用则无需 GPU 服务（纯 CPU、零幻觉、可无头运行）；
+    # 仅当判别式不可用才必须拉起 VLM 服务兜底。
+    disc_ok = False
+    try:
+        DiscriminativeBackend()
+        disc_ok = True
+    except Exception:
+        disc_ok = False
+
+    proc = None
+    if not disc_ok:
+        backend, proc = ensure_server(url, gpu_layers)
+
     work = tempfile.mkdtemp(prefix="pic2edit_")
     try:
         items = prepare_input(input_path, work)
-        prompt = MODE_TO_PROMPT.get(mode, MODE_TO_PROMPT["markdown"])
-        parts = []
-        for it in items:
-            txt = backend.ocr_image(it.image_path, prompt)
-            parts.append(txt)
-        text = "\n\n".join(p for p in parts if p and p.strip())
+        # 统一流水线：判别式优先 + VLM 兜底 + 版面感知 + 表格结构化
+        pipeline_run(items, server_url=url, model="deepseek-ocr",
+                     use_vlm_fallback=True, mode=mode)
+        parts = [it.result for it in items if it.result and it.result.strip()]
+        text = "\n\n".join(parts)
         if mode == "table":
             text = kv_text_to_markdown_table(text)
     finally:
