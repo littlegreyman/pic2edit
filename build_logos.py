@@ -1,7 +1,7 @@
 """Build transparent glyph + horizontal wordmark lockup from the generated assets."""
 from PIL import Image, ImageDraw, ImageFont
 
-ROOT = "C:/Users/michael/Documents/pic2edit"
+ROOT = os.path.dirname(os.path.abspath(__file__))  # 脚本所在目录（项目根），避免硬编码个人路径
 GLYPH = f"{ROOT}/Minimal_software_logo_GLYPH_wi_2026-10-25T10-41-17.png"
 FONT = "C:/Windows/Fonts/arialbd.ttf"  # bold, clean latin wordmark
 

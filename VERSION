@@ -1,6 +1,13 @@
-pic2edit 0.15 (alpha)
+pic2edit 0.16 (alpha)
 ========================
-本地离线图片转可编辑文档工具 —— alpha 0.15 里程碑。
+本地离线图片转可编辑文档工具 —— alpha 0.16 里程碑。
+
+alpha 0.16 相对 0.15 的变更：
+- 新增判别式 OCR 优先流水线（RapidOCR 子环境 .venv_ocr），对清晰印刷体零幻觉；
+  DeepSeek-OCR 降级为 VLM 兜底（仅判别式失败时才启用），从根上消除生成式英文幻觉。
+- 版面感知（剔除页眉/页脚/页码行）+ 按几何间距重组段落，修复章/条标题顺序与误换行。
+- 标准化 pic2edit-ocr WorkBuddy skill：默认判别式、可不拉 GPU 引擎无头运行。
+- 修复 build_logos.py 硬编码个人路径的隐私泄露。
 
 核心能力：
 - DeepSeek-OCR 本地离线 OCR，把 jpg/tif/pdf 转可编辑 Markdown。

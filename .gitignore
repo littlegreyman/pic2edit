@@ -19,6 +19,7 @@ bin/
 *.jpg
 *.log
 pic2edit.log
+ocr_app/test_ocr_sample.docx
 
 # 项目 logo 资源（需纳入版本管理，例外于上面的 *.png / *.jpg）
 !pic2edit-logo.png
