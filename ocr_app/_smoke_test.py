@@ -53,42 +53,37 @@ check("resolution modes present", set(RESOLUTION_MODES) >= {"Tiny", "Gundam"})
 check("prompt templates present", set(PROMPT_TEMPLATES) >= {"markdown", "ocr", "figure"})
 
 
-# 2. PDF: whole-page render + embedded image extraction
+# 2. PDF: whole-page render (pypdfium2)
 try:
-    import fitz  # pymupdf
+    import pypdfium2  # Apache-2.0
+    PDF_OK = True
 except Exception:
-    try:
-        import pymupdf as fitz
-    except Exception:
-        fitz = None
+    PDF_OK = False
 
-if fitz is not None:
+if PDF_OK:
+    # 手写一个最小合法 PDF（pdfium 可直接渲染），验证整页渲染路径
+    pdf_bytes = (
+        b"%PDF-1.4\n"
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n"
+        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] "
+        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n"
+        b"4 0 obj << /Length 56 >>\nstream\n"
+        b"BT /F1 24 Tf 50 700 Td (Hello OCR) Tj ET\nendstream\nendobj\n"
+        b"5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n"
+        b"trailer << /Root 1 0 R >>\n%%EOF\n"
+    )
     pdf_path = os.path.join(WORK, "sample.pdf")
-    doc = fitz.open()
-    page = doc.new_page(width=600, height=800)
-    page.insert_text((50, 60), "Hello DeepSeek OCR", fontsize=24)
-    # embed a small image so extraction path is exercised
-    import io
-    from PIL import Image, ImageDraw
-    img = Image.new("RGB", (120, 80), (200, 30, 30))
-    d = ImageDraw.Draw(img)
-    d.text((10, 30), "EMB", fill=(255, 255, 255))
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    rect = fitz.Rect(50, 400, 170, 480)
-    page.insert_image(rect, stream=buf.getvalue())
-    doc.save(pdf_path)
-    doc.close()
-
+    with open(pdf_path, "wb") as f:
+        f.write(pdf_bytes)
     items = prepare_pdf(pdf_path, WORK)
     check("prepare_pdf returns items", len(items) >= 1)
-    # whole-page render + embedded image extraction both produce PNG image files
-    check("prepare_pdf produced page/embedded image(s)",
+    check("prepare_pdf produced page image(s)",
           any(it.image_path.lower().endswith(".png") for it in items))
     for it in items:
         check(f"pdf item image exists: {it.name}", os.path.isfile(it.image_path))
 else:
-    check("pymupdf available", False)
+    check("pypdfium2 available", False)
 
 
 # 3. Multi-frame TIF split

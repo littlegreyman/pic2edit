@@ -88,7 +88,7 @@ setup_venv.bat        :: Windows
 cd ocr_app
 ./setup_venv.sh       :: Linux / macOS
 ```
-这会在 `ocr_app/.venv` 创建虚拟环境并安装主程序依赖（PyQt6 / PyMuPDF / Pillow / python-docx / markdown / requests / huggingface_hub）。
+这会在 `ocr_app/.venv` 创建虚拟环境并安装主程序依赖（PyQt6 / pypdfium2 / Pillow / python-docx / markdown / requests / huggingface_hub）。
 
 ### 3. 下载推理引擎与模型（只需一次，之后可离线）
 
@@ -214,7 +214,7 @@ DeepSeek-OCR 在 llama.cpp 上的**原生模板会自动注入 media marker** �
 
 - [DeepSeek-OCR](https://github.com/deepseek-ai/DeepSeek-OCR) —— 本地离线 OCR 核心模型。
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) —— 轻量本地推理引擎。
-- [PyMuPDF](https://github.com/pymupdf/PyMuPDF) / [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) / [python-docx](https://github.com/python-openxml/python-docx) 等开源依赖。
+- [pypdfium2](https://github.com/pypdfium2/pypdfium2) / [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) / [python-docx](https://github.com/python-openxml/python-docx) 等开源依赖。
 
 ---
 

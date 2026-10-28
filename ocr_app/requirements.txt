@@ -1,7 +1,7 @@
 # 图片转可编辑文档 - 本地离线 OCR 应用依赖
 # 主程序（GUI + Ollama 后端 + PDF/TIF 处理 + 导出）运行在 Python 3.10+（含 3.13）
 PyQt6>=6.6
-PyMuPDF>=1.24
+pypdfium2>=4.0   # PDF 整页渲染（Apache-2.0，MIT 兼容；替换原 AGPL 的 PyMuPDF）
 Pillow>=10.0
 requests>=2.31
 markdown>=3.5

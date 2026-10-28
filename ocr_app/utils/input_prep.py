@@ -2,19 +2,26 @@
 
 - 图片：直接作为一个图像项。
 - TIF/TIFF：多页/多帧逐帧拆成独立图像（Pillow ImageSequence）。
-- PDF：
-    * 整页渲染为高 DPI 图像（保证完整版面 OCR）；
-    * 同时抽取内嵌的“图形/图片”作为额外图像项（满足“pdf 中的图形”需求）。
+- PDF：整页渲染为高 DPI 图像（保证完整版面 OCR）。
+
 每个图像项落地为临时 PNG，便于预览与后端调用。
+
+PDF 渲染使用 pypdfium2（Apache-2.0），不引入 PyMuPDF（AGPL-3.0）等
+与 MIT 不兼容的依赖。历史上曾尝试“额外抽取每页内嵌图作为 OCR 项”，
+但实践证明：扫描件里的插图/logo 无文字，判别式后端输出空、生成式后端
+却会脑补英文垃圾（章程 PDF 曾因此混入 ~35% 幻觉段），故现已移除该分支，
+仅保留整页渲染。
 """
 import os
 
 from PIL import Image, ImageSequence
 
 try:
-    import pymupdf as fitz  # PyMuPDF >= 1.23
-except ImportError:  # 旧版本
-    import fitz
+    import pypdfium2 as pdfium  # Apache-2.0，MIT 兼容
+except ImportError:
+    pdfium = None
+
+PDF_AVAILABLE = pdfium is not None
 
 
 class InputItem:
@@ -55,43 +62,26 @@ def prepare_tif(path: str, work_dir: str) -> list:
 
 
 def prepare_pdf(path: str, work_dir: str, dpi: int = 200) -> list:
-    """PDF -> 整页渲染图像 + 内嵌图形抽取。"""
+    """PDF -> 整页渲染图像（每页一张高 DPI PNG）。
+
+    使用 pypdfium2 渲染；不再抽取每页内嵌图（见模块 docstring 说明）。
+    """
+    if not PDF_AVAILABLE:
+        raise RuntimeError(
+            "未安装 pypdfium2，无法处理 PDF。请先 `pip install pypdfium2`。"
+        )
     name = os.path.basename(path)
     base = os.path.splitext(name)[0]
     items = []
-    doc = fitz.open(path)
-    # 1) 整页渲染
-    for i, page in enumerate(doc):
-        pix = page.get_pixmap(dpi=dpi)
+    doc = pdfium.PdfDocument(path)
+    scale = dpi / 72.0  # pypdfium2 的 scale=1 对应 72 DPI
+    for i in range(len(doc)):
+        page = doc[i]
+        bitmap = page.render(scale=scale)
+        pil = bitmap.to_pil()
         dst = os.path.join(work_dir, _safe_name(f"{base}_page", i + 1))
-        pix.save(dst)
+        pil.save(dst, "PNG")
         items.append(InputItem(f"{name} - 第{i + 1}页", dst, path))
-    # 2) 抽取内嵌图像（即“pdf 中的图形”）——只保留“大尺寸/独立”插图，
-    #    跳过 logo / 装饰 / 页码类小图。这些小图被 VLM 读不到文字时会脑补成
-    #    英文废话（章程 PDF 曾因此混入 ~35% 垃圾段），是必须修的 bug。
-    img_index = 0
-    for i, page in enumerate(doc):
-        pw = page.rect.width * dpi / 72.0   # 渲染后页面像素宽
-        ph = page.rect.height * dpi / 72.0  # 渲染后页面像素高
-        page_area = pw * ph
-        for img in page.get_images(full=True):
-            img_index += 1
-            try:
-                xref = img[0]
-                pix = fitz.Pixmap(doc, xref)
-                if pix.n - pix.alpha >= 4:  # CMYK 转 RGB
-                    pix = fitz.Pixmap(fitz.csRGB, pix)
-                fig_area = pix.width * pix.height
-                # 面积占比过小（装饰/logo/页码）或非独立小图 -> 跳过
-                if fig_area / page_area < 0.30 or min(pix.width, pix.height) < 200:
-                    continue
-                dst = os.path.join(work_dir, _safe_name(f"{base}_fig", img_index))
-                pix.save(dst)
-                items.append(
-                    InputItem(f"{name} - 第{i + 1}页图{img_index}", dst, path)
-                )
-            except Exception:
-                continue
     doc.close()
     return items
 

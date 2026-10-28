@@ -230,6 +230,6 @@ run_llamacpp_server.bat   :: 启动本地 OCR 服务（默认 http://localhost:8
 | [DeepSeek-OCR](https://github.com/deepseek-ai/DeepSeek-OCR)（模型 + 官方推理代码） | 本地离线 OCR 核心 | 遵循 deepseek-ai 官方许可证 | 仅运行时依赖，按官方要求使用/署名 |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp)（预编译 `llama-server`） | 本地推理引擎（默认后端） | MIT | 仅下载二进制，不修改/不打包源码 |
 | [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) | GUI 框架 | **GPLv3 或商业许可** | ⚠️ 若分发打包后的 GUI 程序，PyQt6 的 GPLv3 会要求整体按 GPLv3 开源；如需闭源分发 GUI，请改用 PySide6（LGPL） |
-| PyMuPDF / Pillow / python-docx / markdown / requests | 文档/图片处理与 HTTP 客户端 | 各自宽松许可证（MIT 等） | 经由 pip 安装，非本仓库内置 |
+| pypdfium2 / Pillow / python-docx / markdown / requests | 文档/图片处理与 HTTP 客户端 | 各自宽松许可证（pypdfium2 为 Apache-2.0，其余 MIT/BSD） | 经由 pip 安装，非本仓库内置 |
 
 > 提示：若你修改并分发本工具，请保留上述 MIT 许可声明，并按上游各自许可证要求保留其版权/署名信息。

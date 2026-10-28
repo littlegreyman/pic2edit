@@ -24,7 +24,7 @@ LOGGER_NAME = "pic2edit"
 
 # 关键依赖（尽力获取版本，失败记为 n/a）
 _DEP_MODULES = (
-    "PyQt6", "PyMuPDF", "fitz", "PIL", "requests", "markdown",
+    "PyQt6", "pypdfium2", "PIL", "requests", "markdown",
     "docx", "torch", "transformers", "huggingface_hub",
 )
 

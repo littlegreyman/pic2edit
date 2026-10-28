@@ -1,0 +1,58 @@
+THIRD-PARTY NOTICES
+===================
+
+pic2edit 自身源码以 MIT License 发布（见根目录 LICENSE）。
+本项目不打包、不内置任何第三方二进制或模型权重；以下组件均通过 pip 在
+运行时安装于用户本地环境，按其各自许可证使用。依 Apache-2.0 等许可证要求，
+此处集中保留其许可证与版权声明索引，便于合规分发与署名。
+
+主程序依赖（ocr_app/requirements.txt）
+--------------------------------------
+- PyQt6 (>=6.6)            — GPL-3.0-or-commercial (Riverbank Computing Ltd.)
+                            注意：分发含 PyQt6 的 GUI 二进制须整体按 GPLv3 开源；
+                            如需闭源分发 GUI，请改用 PySide6（LGPL-3.0）。
+- pypdfium2 (>=4.0)        — Apache-2.0（PDF 渲染后端，基于 PDFium）
+- Pillow (>=10.0)          — MIT-CMU / HPND
+- requests (>=2.31)        — Apache-2.0
+- markdown (>=3.5)         — BSD-3-Clause
+- python-docx (>=1.1)      — MIT
+- huggingface_hub (>=0.23) — Apache-2.0
+- numpy                    — BSD-3-Clause（传递依赖）
+
+OCR 引擎依赖（.venv_ocr，默认判别式后端）
+----------------------------------------
+- rapidocr_onnxruntime (1.2.x) — Apache-2.0（含 RapidOCR 模型与 ONNX 运行时封装）
+- onnxruntime                  — MIT
+- opencv-python / opencv-python-headless — Apache-2.0
+- pyclipper                    — MIT
+- shapely                      — BSD-3-Clause
+- PyYAML                       — MIT
+- protobuf                     — BSD-3-Clause
+- flatbuffers                  — Apache-2.0
+- packaging                    — BSD-2-Clause / Apache-2.0 / MIT
+- six                          — MIT
+
+Transformers 后端依赖（ocr_app/requirements_tf.txt，独立 Python 3.11 环境）
+---------------------------------------------------------------------------
+- torch / torchvision          — BSD-3-Clause
+- transformers                 — Apache-2.0
+- accelerate                   — Apache-2.0
+- bitsandbytes                 — MIT
+- einops                       — MIT
+- sentencepiece                — Apache-2.0
+
+运行时下载（不随仓库分发，按各自官方许可证使用）
+------------------------------------------------
+- DeepSeek-OCR 模型与官方推理代码 — 遵循 deepseek-ai 官方许可证
+- llama.cpp (llama-server 预编译二进制) — MIT
+
+许可兼容性说明
+--------------
+源码以 MIT License 发布。默认判别式 OCR 路径（pypdfium2 + RapidOCR 系列）
+全部为 MIT / Apache-2.0 / BSD，与 MIT 完全兼容。唯一与 MIT 不兼容的是 GUI
+框架 PyQt6（GPL-3.0）：若仅以源码形式分发、或将 GUI 改为 PySide6（LGPL-3.0），
+则整体可保持 MIT 兼容分发；若打包分发含 PyQt6 的 GUI 二进制，则该二进制须
+按 GPL-3.0 开源。
+
+本项目历史上曾使用 PyMuPDF（AGPL-3.0，与 MIT 不兼容）做 PDF 渲染，已在
+0.16 版本替换为 pypdfium2（Apache-2.0），以消除 AGPL 合规冲突。
