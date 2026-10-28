@@ -14,6 +14,52 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OCR_VENV = os.path.join(HERE, "..", ".venv_ocr")
 CLI = os.path.join(HERE, "..", "_rapidocr_cli.py")
 
+# 章节/条文/条款 标题：与后续正文应同行、以两个空格相接
+_HEADER_RE = re.compile(r"^第[0-9一二三四五六七八九十百千]+[章节目条]")
+
+
+def assemble_markdown(lines, H=0):
+    """将判别式 OCR 的逐行结果按几何间距重组为段落，消除误换行。
+
+    - 行间垂直间距 <= ~0.8 行高 -> 视为同一段落（中文连续拼接，不插空格）
+    - 段落首行若为“第X章/条/节/目”标题 -> 标题与正文之间用两个空格连接
+    - 段落之间用空行分隔
+    入参 lines 需已按 (y0, x0) 排序。
+    """
+    if not lines:
+        return ""
+    paras = []
+    cur = [lines[0]]
+    for prev, nxt in zip(lines, lines[1:]):
+        gap = nxt["y0"] - prev["y1"]
+        h_prev = max(prev["y1"] - prev["y0"], 1)
+        h_nxt = max(nxt["y1"] - nxt["y0"], 1)
+        h = max(h_prev, h_nxt)
+        # 标题续接：上一行是章节/条标题，则无论间距都并入同一段落
+        if _HEADER_RE.match(prev["text"].strip()):
+            cur.append(nxt)
+            continue
+        # 行内小间距（约 <=0.8 行高）视为同一段落的换行续接
+        if gap <= 0.8 * h:
+            cur.append(nxt)
+        else:
+            paras.append(cur)
+            cur = [nxt]
+    paras.append(cur)
+
+    out = []
+    for p in paras:
+        texts = [l["text"].strip() for l in p]
+        texts = [t for t in texts if t]
+        if not texts:
+            continue
+        if _HEADER_RE.match(texts[0]):
+            # 标题 + 两个空格 + 正文（正文各行连续拼接，不插空格）
+            out.append(texts[0] + "  " + "".join(texts[1:]))
+        else:
+            out.append("".join(texts))
+    return "\n\n".join(out)
+
 
 def _venv_python():
     cand = os.path.join(OCR_VENV, "bin", "python")
@@ -69,4 +115,4 @@ class DiscriminativeBackend:
                 continue
             keep.append(ln)
         keep.sort(key=lambda l: (round(l["y0"]), l["x0"]))
-        return "\n".join(l["text"] for l in keep)
+        return assemble_markdown(keep, H)
