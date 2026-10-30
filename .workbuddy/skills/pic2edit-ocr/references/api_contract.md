@@ -70,7 +70,7 @@
 
 ## 7. 环境约束
 
-- 必须用 `ocr_app/.venv/bin/python` 运行（含 requests / Pillow / pypdfium2 / python-docx）。
+- 必须用 `<项目根>/.venv/bin/python3` 运行（含 requests / Pillow / pypdfium2 / python-docx）。注意已装依赖的虚拟环境在项目根目录 `.venv`，不是 `ocr_app/.venv`（`ocr_app/.venv` 为空环境，用之会报 ModuleNotFoundError）。
 - 首次启动引擎约 1–3 分钟加载模型进显存；6GB 显存跑 Q4_K_M（≈2GB）可行。
 - 引擎默认常驻；`--stop-server` 可在本次拉起后退出。
 - 容器无 GPU：传 `--gpu-layers 0` 走 CPU（需足够内存加载模型）。

@@ -353,7 +353,8 @@ class MainWindow(QMainWindow):
             hints = {
                 "ollama": "请确认 Ollama 服务已启动，且已执行 `ollama pull deepseek-ocr`。",
                 "llama_cpp": "请确认 llama-server 已启动（如 `llama-server -m xxx.gguf --mmproj xxx-mmproj.gguf "
-                             "--chat-template deepseek-ocr --port 8080`），且服务地址/模型名正确。",
+                             "--port 8080`；注意：不要加 --chat-template deepseek-ocr，否则会 HTTP 400 / 只回废话），"
+                             "且服务地址/模型名正确。",
                 "transformers": "请确认已用 download_models_tf.bat 建好 .venv_tf 并下载模型，且已运行 run_transformers_server.bat 启动本地服务（默认 http://localhost:8001）。",
             }
             _logger.warning("backend [%s] unavailable", self.backend.name)

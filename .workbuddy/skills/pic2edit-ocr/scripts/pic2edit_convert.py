@@ -32,7 +32,22 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def _find_ocr_app():
-    """从本脚本向上查找含 run_llamacpp_server.py 的目录（即 ocr_app）。"""
+    """定位 pic2edit 的 ocr_app 目录（含 run_llamacpp_server.py）。
+
+    解析优先级：
+      1) 环境变量 PIC2EDIT_OCR_APP / PIC2EDIT_ROOT（显式指路，最可靠）
+      2) 从本脚本位置向上查找（适用于技能随项目放置的情况）
+      3) 本机已知的固定项目路径兜底（适用于技能装为「用户级」、
+         脚本位于 ~/.workbuddy/skills/... 时，向上找不到仓库）
+    """
+    env = os.environ.get("PIC2EDIT_OCR_APP")
+    if not env:
+        root = os.environ.get("PIC2EDIT_ROOT")
+        if root:
+            env = os.path.join(root, "ocr_app")
+    if env and os.path.isfile(os.path.join(env, "run_llamacpp_server.py")):
+        return env
+    # 向上查找（技能随项目放在 <repo>/.workbuddy/skills/... 时命中）
     cur = HERE
     for _ in range(6):
         if os.path.isfile(os.path.join(cur, "run_llamacpp_server.py")):
@@ -41,7 +56,11 @@ def _find_ocr_app():
         if parent == cur:
             break
         cur = parent
-    # 兜底：相对推算（scripts -> pic2edit-ocr -> skills -> .workbuddy -> 项目根 -> ocr_app）
+    # 兜底：本机已知路径（技能装为「用户级」时也能定位）
+    fallback = "/home/michael/文档/pic2edit/pic2edit/ocr_app"
+    if os.path.isfile(os.path.join(fallback, "run_llamacpp_server.py")):
+        return fallback
+    # 最后退回旧的相对推算（兼容历史布局）
     return os.path.abspath(os.path.join(HERE, "..", "..", "..", "..", "ocr_app"))
 
 
@@ -115,17 +134,38 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server):
         sys.stderr.write(f"[error] 输入文件不存在: {input_path}\n")
         sys.exit(2)
 
+    # 自动规避沙箱内存限制：若本进程虚拟内存软限制受限（如 WorkBuddy 沙箱 4GB），
+    # RapidOCR/onnxruntime 加载模型会被 OOM killer 连父进程一起 SIGKILL(137)，表现为
+    # 无任何输出的“死机”。此时跳过判别式，直接走 VLM 兜底（依赖本机 :8080 的 llama-server）。
+    # 也可用环境变量 PIC2EDIT_SKIP_DISCRIMINATIVE=1 强制跳过。
+    import resource as _rs
+
+    def _vmem_limited_gb():
+        try:
+            soft, _ = _rs.getrlimit(_rs.RLIMIT_AS)
+        except Exception:
+            return 0
+        if soft == _rs.RLIM_INFINITY:
+            return 0
+        return soft / (1024 ** 3)
+
+    _force = os.environ.get("PIC2EDIT_SKIP_DISCRIMINATIVE", "").lower() in ("1", "true", "yes")
+    skip_disc = _force or (0 < _vmem_limited_gb() <= 6)
+    if skip_disc:
+        sys.stderr.write("[info] 内存受限环境：跳过判别式(RapidOCR)，改用 VLM 兜底(需本机 :8080 的 llama-server)\n")
+
     # 判别式后端可用则无需 GPU 服务（纯 CPU、零幻觉、可无头运行）；
-    # 仅当判别式不可用才必须拉起 VLM 服务兜底。
+    # 仅当判别式不可用且未跳过时，才拉起 VLM 服务兜底。
     disc_ok = False
-    try:
-        DiscriminativeBackend()
-        disc_ok = True
-    except Exception:
-        disc_ok = False
+    if not skip_disc:
+        try:
+            DiscriminativeBackend()
+            disc_ok = True
+        except Exception:
+            disc_ok = False
 
     proc = None
-    if not disc_ok:
+    if not skip_disc and not disc_ok:
         backend, proc = ensure_server(url, gpu_layers)
 
     work = tempfile.mkdtemp(prefix="pic2edit_")
@@ -133,7 +173,8 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server):
         items = prepare_input(input_path, work)
         # 统一流水线：判别式优先 + VLM 兜底 + 版面感知 + 表格结构化
         pipeline_run(items, server_url=url, model="deepseek-ocr",
-                     use_vlm_fallback=True, mode=mode)
+                     use_vlm_fallback=True, mode=mode,
+                     skip_discriminative=skip_disc)
         parts = [it.result for it in items if it.result and it.result.strip()]
         text = "\n\n".join(parts)
         if mode == "table":

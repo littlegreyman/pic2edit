@@ -20,7 +20,8 @@ agent_created: true
    - 识别模式 `--mode`：表格 / 键值表 → `table`；图表 / 公式 → `figure`；纯文本 OCR → `ocr`；默认 → `markdown`。
 3. 用项目虚拟环境运行 helper（`<skill>/scripts/pic2edit_convert.py` 相对本技能目录）：
    ```
-   <项目根>/ocr_app/.venv/bin/python <skill>/scripts/pic2edit_convert.py <附件路径> --format <fmt> --mode <mode>
+   <项目根>/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py <附件路径> --format <fmt> --mode <mode>
+   （注意：已装好全部依赖的虚拟环境在项目根目录 .venv，不是 ocr_app/.venv；ocr_app/.venv 是空环境，用它跑会报 ModuleNotFoundError）
    ```
    - 容器内无 GPU 自测时追加 `--gpu-layers 0`（CPU 模式）；用户原生桌面**不加**（自动用 GPU）。
    - 引擎未启动会被 helper 自动拉起（首次约 1–3 分钟加载进显存）；已启动则复用，不重复拉起。

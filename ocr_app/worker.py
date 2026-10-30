@@ -5,6 +5,7 @@ from backends.base import OCRBackend
 from utils.input_prep import InputItem
 from utils.logging_setup import get_logger, log_exception
 from utils.table_utils import kv_text_to_markdown_table
+from backends.ocr_pipeline import run as pipeline_run
 
 _logger = get_logger("worker")
 
@@ -34,11 +35,20 @@ class OcrWorker(QThread):
             item.status = "转换中"
             self.progress.emit(n, total, item.name)
             try:
-                text = self.backend.ocr_image(item.image_path, self.prompt)
+                # 走统一流水线：判别式优先（RapidOCR，零幻觉）+ VLM 兜底（zh 提示词 +
+                # 幻觉防御层），而非把整页直接丢给会幻觉的 VLM。干净中文印刷页在判别式
+                # 阶段即完成，VLM 不会被触发，从根本上消除“英文宪法”这类幻觉。
+                pipeline_run(
+                    [item],
+                    vlm_backend=self.backend,
+                    use_vlm_fallback=True,
+                    mode="markdown",
+                )
+                text = item.result
                 if self.as_table:
                     text = kv_text_to_markdown_table(text)
                 item.result = text
-                item.status = "完成"
+                item.status = "完成" if text else "失败"
                 _logger.info("OCR done: %s (%d/%d)", item.name, n, total)
             except Exception as e:
                 item.result = f"[OCR 失败] {e}"
