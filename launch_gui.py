@@ -12,7 +12,7 @@
 
 设计：本脚本用“系统 python”运行，仅负责定位项目与虚拟环境，然后以
 子进程方式调用 ocr_app/.venv 里的 python 启动真正的 GUI（main.py）。
-GUI 启动后会按需自动拉起本地 OCR 引擎（llama.cpp / RapidOCR），无需手动起服务。
+GUI 在首次转换且后端不可用时，会自动拉起本地 OCR 引擎（llama.cpp 默认；Transformers 亦可），无需手动起服务；RapidOCR 判别式后端按需以子进程调用。
 
 定位优先级：
   1) 环境变量 PIC2EDIT_OCR_APP / PIC2EDIT_ROOT（最可靠）

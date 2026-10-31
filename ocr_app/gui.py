@@ -10,12 +10,14 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QLabel, QTextEdit, QTextBrowser, QTabWidget,
     QToolBar, QFileDialog, QMessageBox, QProgressBar, QPushButton, QDialog,
     QFormLayout, QComboBox, QLineEdit, QDialogButtonBox, QGroupBox, QPlainTextEdit,
+    QProgressDialog,
 )
 
 import markdown
 
 from config import Config, RESOLUTION_MODES, PROMPT_LABELS
 from backends import OllamaBackend, TransformersBackend, LlamaCppBackend
+from backends.server_launcher import ServerStarter
 from worker import OcrWorker
 from utils.input_prep import prepare_input, InputItem
 from utils.export_docx import md_to_docx, save_text
@@ -350,20 +352,12 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "提示", "请先选择要转换的文件")
             return
         if not self.backend.available():
-            hints = {
-                "ollama": "请确认 Ollama 服务已启动，且已执行 `ollama pull deepseek-ocr`。",
-                "llama_cpp": "请确认 llama-server 已启动（如 `llama-server -m xxx.gguf --mmproj xxx-mmproj.gguf "
-                             "--port 8080`；注意：不要加 --chat-template deepseek-ocr，否则会 HTTP 400 / 只回废话），"
-                             "且服务地址/模型名正确。",
-                "transformers": "请确认已用 download_models_tf.bat 建好 .venv_tf 并下载模型，且已运行 run_transformers_server.bat 启动本地服务（默认 http://localhost:8001）。",
-            }
-            _logger.warning("backend [%s] unavailable", self.backend.name)
-            log_env_on_error(_logger, self.cfg, extra=f"hints={hints.get(self.backend.name, '')}")
-            QMessageBox.warning(
-                self, "后端不可用",
-                f"当前后端 [{self.backend.name}] 不可用。\n{hints.get(self.backend.name, '')}"
-            )
+            # 后端不可用：先尝试按需自动拉起本地 OCR 引擎（GUI 关闭时也会清理）
+            self._try_autostart_then_run(indices)
             return
+        self._begin_convert(indices)
+
+    def _begin_convert(self, indices):
         self.progress.setVisible(True)
         self.progress.setValue(0)
         self.worker = OcrWorker(
@@ -375,6 +369,53 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(lambda e: (_logger.error("worker error: %s", e), QMessageBox.critical(self, "错误", e)))
         self.worker.start()
+
+    def _try_autostart_then_run(self, indices):
+        """后端不可用时，弹窗拉起本地引擎并等待就绪；成功后自动进入转换。"""
+        starter = ServerStarter(self.backend.name, self.backend.base_url, self.cfg)
+        self._server_starter = starter
+        starter.log.connect(self._append_log)
+
+        dlg = QProgressDialog(
+            "正在启动本地 OCR 引擎（%s）…\n首次加载模型到显存约需 1–3 分钟，请稍候；"
+            "启动日志见主界面下方“运行状态”。" % self.backend.name,
+            "取消", 0, 0, self,
+        )
+        dlg.setWindowTitle("启动 OCR 引擎")
+        dlg.setModal(True)
+        dlg.setMinimumDuration(0)
+
+        def on_started():
+            self._server_proc = starter._proc
+            dlg.accept()
+            self._begin_convert(indices)
+
+        def on_failed(msg):
+            if dlg.wasCanceled():  # 用户已取消，不再弹警告
+                return
+            dlg.reject()
+            self._show_backend_unavailable(msg)
+
+        starter.started.connect(on_started)
+        starter.failed.connect(on_failed)
+        dlg.canceled.connect(starter.stop)  # 用户取消：终止正在启动的引擎
+        starter.start()
+        dlg.exec()  # 阻塞直到 started / failed / 取消
+
+    def _show_backend_unavailable(self, detail=None):
+        hints = {
+            "ollama": "请确认 Ollama 服务已启动，且已执行 `ollama pull deepseek-ocr`。",
+            "llama_cpp": "请确认 llama-server 已启动（如 `llama-server -m xxx.gguf --mmproj xxx-mmproj.gguf "
+                         "--port 8080`；注意：不要加 --chat-template deepseek-ocr，否则会 HTTP 400 / 只回废话），"
+                         "且服务地址/模型名正确。",
+            "transformers": "请确认已用 download_models_tf.bat 建好 .venv_tf 并下载模型，且已运行 run_transformers_server.bat 启动本地服务（默认 http://localhost:8001）。",
+        }
+        msg = f"当前后端 [{self.backend.name}] 不可用。\n{hints.get(self.backend.name, '')}"
+        if detail:
+            msg += "\n\n自动启动失败详情：\n" + detail
+        _logger.warning("backend [%s] unavailable; detail=%s", self.backend.name, detail)
+        log_env_on_error(_logger, self.cfg, extra=f"detail={detail}")
+        QMessageBox.warning(self, "后端不可用", msg)
 
     def _on_progress(self, n, total, name):
         self.progress.setMaximum(total)
@@ -441,6 +482,19 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(self._backend_status())
 
     def closeEvent(self, event):
+        # GUI 自动拉起的本地 OCR 引擎（llama-server / transformers 服务）是 GUI 的子进程，
+        # 关闭窗口时一并终止，避免残留进程占用显存。
+        proc = getattr(self, "_server_proc", None)
+        if proc is not None:
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        proc.kill()
+            except Exception:
+                pass
         import shutil
         try:
             shutil.rmtree(self.work_dir, ignore_errors=True)
