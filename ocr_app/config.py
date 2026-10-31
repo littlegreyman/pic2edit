@@ -89,6 +89,10 @@ class Config:
     output_dir: str = ""               # 导出目录，空则用输入文件同目录
     # 模型采样参数（GUI 设置面板可改；默认值见 ModelParams 说明）
     model_params: ModelParams = field(default_factory=ModelParams)
+    # 上次成功参数快照（仅记录，便于“应用上次成功 / 自动复用”）
+    last_success: dict = field(default_factory=dict)
+    # 启动时是否自动套用上次成功参数（模型参数 + 输出格式）
+    auto_reuse_last_success: bool = True
 
     def save(self):
         os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -115,3 +119,12 @@ class Config:
 
     def prompt(self) -> str:
         return PROMPT_TEMPLATES.get(self.prompt_template, PROMPT_TEMPLATES["markdown"])
+
+
+# 模型参数预设（GUI 设置面板一键套用；不引入任何自动调参/ML 逻辑）
+MODEL_PARAM_PRESETS = {
+    "默认（稳定，推荐）": ModelParams(),
+    "强化抗退化": ModelParams(repeat_penalty=1.15, repeat_last_n=4096),
+    "大上下文长文档": ModelParams(max_tokens=32768),
+    "探索采样（不推荐）": ModelParams(temperature=0.2, repeat_penalty=1.10),
+}

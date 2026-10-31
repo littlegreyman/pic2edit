@@ -10,18 +10,19 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QLabel, QTextEdit, QTextBrowser, QTabWidget,
     QToolBar, QFileDialog, QMessageBox, QProgressBar, QPushButton, QDialog,
     QFormLayout, QComboBox, QLineEdit, QDialogButtonBox, QGroupBox, QPlainTextEdit,
-    QProgressDialog, QDoubleSpinBox, QSpinBox,
+    QProgressDialog, QDoubleSpinBox, QSpinBox, QCheckBox,
 )
 
 import markdown
 
-from config import Config, RESOLUTION_MODES, PROMPT_LABELS, ModelParams
+from config import Config, RESOLUTION_MODES, PROMPT_LABELS, ModelParams, MODEL_PARAM_PRESETS
 from backends import OllamaBackend, TransformersBackend, LlamaCppBackend
 from backends.server_launcher import ServerStarter
 from worker import OcrWorker
 from utils.input_prep import prepare_input, InputItem, InputDocument
-from utils.export_docx import save_text, md_pages_to_docx
+from utils.export_docx import md_to_docx, save_text, md_pages_to_docx
 from utils.assemble import assemble_document
+from utils import usage_log
 from utils.logging_setup import get_logger, log_env_on_error
 from utils.app_home import resource_path
 
@@ -194,7 +195,24 @@ class SettingsDialog(QDialog):
         self.mp_max_tokens.setSingleStep(256)
         self.mp_max_tokens.setValue(cfg.model_params.max_tokens)
         mpl.addRow("max_tokens", self.mp_max_tokens)
+        # 参数预设：一键套用一组经验值（不引入自动调参）
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItem("（自定义）")
+        for name in MODEL_PARAM_PRESETS:
+            self.preset_combo.addItem(name)
+        self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
+        mpl.addRow("快速预设", self.preset_combo)
+        self.btn_apply_last = QPushButton("应用上次成功参数（模型）")
+        self.btn_apply_last.clicked.connect(self._apply_last_success)
+        mpl.addRow(self.btn_apply_last)
         layout.addRow(gb_mp)
+
+        # 上次成功复用开关
+        self.auto_reuse = QCheckBox("启动时自动套用上次成功参数（模型参数 + 输出格式）")
+        self.auto_reuse.setChecked(bool(getattr(cfg, "auto_reuse_last_success", True)))
+        self.auto_reuse.setToolTip("开启后，每次启动自动采用最近一次“全部成功”作业的参数，"
+                                  "便于快速回到可用配置。")
+        layout.addRow(self.auto_reuse)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -202,6 +220,25 @@ class SettingsDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
+
+    def _on_preset_changed(self, name):
+        preset = MODEL_PARAM_PRESETS.get(name)
+        if preset is None:
+            return
+        self.mp_temperature.setValue(preset.temperature)
+        self.mp_repeat_penalty.setValue(preset.repeat_penalty)
+        self.mp_repeat_last_n.setValue(preset.repeat_last_n)
+        self.mp_max_tokens.setValue(preset.max_tokens)
+
+    def _apply_last_success(self):
+        snap = usage_log.last_success_snapshot()
+        mp = (snap or {}).get("model_params")
+        if not isinstance(mp, dict):
+            return
+        self.mp_temperature.setValue(float(mp.get("temperature", 0.0)))
+        self.mp_repeat_penalty.setValue(float(mp.get("repeat_penalty", 1.10)))
+        self.mp_repeat_last_n.setValue(int(mp.get("repeat_last_n", 4096)))
+        self.mp_max_tokens.setValue(int(mp.get("max_tokens", 16384)))
 
     def get_config(self) -> Config:
         self.cfg.backend = self.backend.currentText()
@@ -221,6 +258,7 @@ class SettingsDialog(QDialog):
             repeat_last_n=self.mp_repeat_last_n.value(),
             max_tokens=self.mp_max_tokens.value(),
         )
+        self.cfg.auto_reuse_last_success = self.auto_reuse.isChecked()
         return self.cfg
 
 
@@ -228,6 +266,16 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.cfg = Config.load()
+        # 启动时自动套用上次成功参数（模型参数 + 输出格式），便于快速回到可用配置。
+        # 仅作用于本次会话内存，不覆盖磁盘上用户显式保存的配置。
+        if getattr(self.cfg, "auto_reuse_last_success", False) and self.cfg.last_success:
+            ls = self.cfg.last_success or {}
+            pt = ls.get("prompt_template")
+            if pt and pt in PROMPT_LABELS:
+                self.cfg.prompt_template = pt
+            mp = ls.get("model_params")
+            if isinstance(mp, dict):
+                self.cfg.model_params = ModelParams(**mp)
         self.items: list = []           # 扁平图像项（供 OcrWorker / 导出使用）
         self.documents: list = []       # 文档分组（InputDocument），供树形展示/整文档导出（P0 起）
         self.page_tree_items: list = [] # 与 self.items 平行：每个图像项的树子节点（更新状态用）
@@ -808,6 +856,44 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
         self.statusBar().showMessage(f"转换完成（共 {len(self.items)} 个图像项）")
         _logger.info("conversion finished; total items=%d", len(self.items))
+        # 记录本次作业到 usage_log.jsonl（后端 / 输出格式 / 模型参数 / 成功失败计数）
+        try:
+            idxs = list(getattr(self.worker, "indices", range(len(self.items)))) if self.worker else list(range(len(self.items)))
+            processed = [self.items[i] for i in idxs if 0 <= i < len(self.items)]
+            n_done = sum(1 for it in processed if it.status == "完成")
+            n_fail = sum(1 for it in processed if it.status == "失败")
+            n_total = len(processed)
+            success = (n_fail == 0 and n_done > 0)
+            mp = self.cfg.model_params
+            usage_log.record({
+                "backend": self.cfg.backend,
+                "prompt_template": self.cfg.prompt_template,
+                "model_params": {
+                    "temperature": mp.temperature,
+                    "repeat_penalty": mp.repeat_penalty,
+                    "repeat_last_n": mp.repeat_last_n,
+                    "max_tokens": mp.max_tokens,
+                },
+                "n_total": n_total, "n_done": n_done, "n_fail": n_fail,
+                "success": success,
+            })
+            # 全部成功：更新上次成功快照，供“应用上次成功 / 自动复用”
+            if success:
+                self.cfg.last_success = {
+                    "prompt_template": self.cfg.prompt_template,
+                    "model_params": {
+                        "temperature": mp.temperature,
+                        "repeat_penalty": mp.repeat_penalty,
+                        "repeat_last_n": mp.repeat_last_n,
+                        "max_tokens": mp.max_tokens,
+                    },
+                }
+                try:
+                    self.cfg.save()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     # ---------- 导出（按选择，单一按钮）----------
     def export_selected(self):
