@@ -45,12 +45,16 @@ def test_settings_preset_applies():
     app = QApplication.instance() or QApplication([])
     cfg = Config()
     dlg = SettingsDialog(cfg)
-    dlg._on_preset_changed("强化抗退化")
-    assert dlg.mp_repeat_penalty.value() == 1.15
-    assert dlg.mp_repeat_last_n.value() == 4096
+    # 模型参数控件已改为“每后端子页各一份”，取当前后端那一页的控件组
+    w = dlg._mp_widgets[dlg.backend.currentText()]  # (temperature, rp, rln, max_tokens)
+    dlg._apply_preset("强化抗退化", *w)
+    assert w[1].value() == 1.15
+    assert w[2].value() == 4096
     # 默认预设
-    dlg._on_preset_changed("默认（稳定，推荐）")
-    assert dlg.mp_temperature.value() == 0.0
+    dlg._apply_preset("默认（稳定，推荐）", *w)
+    assert w[0].value() == 0.0
+    dlg.close()
+    app.processEvents()
 
 
 def test_settings_apply_last_success():
@@ -62,10 +66,13 @@ def test_settings_apply_last_success():
         "model_params": {"temperature": 0.0, "repeat_penalty": 1.20,
                          "repeat_last_n": 3333, "max_tokens": 8192},
     }
-    dlg._apply_last_success()
-    assert dlg.mp_repeat_penalty.value() == 1.20
-    assert dlg.mp_repeat_last_n.value() == 3333
-    assert dlg.mp_max_tokens.value() == 8192
+    w = dlg._mp_widgets[dlg.backend.currentText()]
+    dlg._apply_last_success_to(*w)
+    assert w[1].value() == 1.20
+    assert w[2].value() == 3333
+    assert w[3].value() == 8192
+    dlg.close()
+    app.processEvents()
 
 
 def test_settings_get_config_writes_auto_reuse():
@@ -75,6 +82,8 @@ def test_settings_get_config_writes_auto_reuse():
     dlg.auto_reuse.setChecked(False)
     out = dlg.get_config()
     assert out.auto_reuse_last_success is False
+    dlg.close()
+    app.processEvents()
 
 
 def main():

@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, Signal, QObject, QThread
 from PySide6.QtGui import QPixmap, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QTreeWidget, QTreeWidgetItem, QLabel, QTextEdit, QTextBrowser, QTabWidget,
+    QTreeWidget, QTreeWidgetItem, QLabel, QTextEdit, QTextBrowser, QTabWidget, QStackedWidget,
     QToolBar, QFileDialog, QMessageBox, QProgressBar, QPushButton, QDialog,
     QFormLayout, QComboBox, QLineEdit, QDialogButtonBox, QGroupBox, QPlainTextEdit,
     QProgressDialog, QDoubleSpinBox, QSpinBox, QCheckBox,
@@ -120,32 +120,33 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.cfg = cfg
         self.setWindowTitle("设置")
-        self.resize(520, 360)
+        self.resize(580, 560)
         layout = QFormLayout(self)
 
+        # 顶部：选择后端模型服务器类型
         self.backend = QComboBox()
         self.backend.addItems(["ollama", "transformers", "llama_cpp"])
         self.backend.setCurrentText(cfg.backend)
-        layout.addRow("推理后端", self.backend)
+        self.backend.currentTextChanged.connect(self._on_backend_changed)
+        layout.addRow("后端模型服务器类型", self.backend)
 
-        gb_ollama = QGroupBox("Ollama 后端")
-        ol = QFormLayout(gb_ollama)
+        # 动态子页面：按所选后端仅显示其一（其余由 QStackedWidget 自动隐藏）
+        self.stack = QStackedWidget()
+
+        # --- 子页面一：Ollama ---
+        page_ollama = QWidget()
+        ol = QFormLayout(page_ollama)
         self.ollama_url = QLineEdit(cfg.ollama_url)
         self.ollama_model = QLineEdit(cfg.ollama_model)
         ol.addRow("服务地址", self.ollama_url)
         ol.addRow("模型名", self.ollama_model)
-        layout.addRow(gb_ollama)
+        gb_mp_o, mp_o = self._make_model_params_group()
+        ol.addRow(gb_mp_o)
+        self.stack.addWidget(page_ollama)
 
-        gb_lcp = QGroupBox("llama.cpp 后端（本地 llama-server）")
-        lcl = QFormLayout(gb_lcp)
-        self.lcp_url = QLineEdit(cfg.llama_cpp_url)
-        self.lcp_model = QLineEdit(cfg.llama_cpp_model)
-        lcl.addRow("服务地址", self.lcp_url)
-        lcl.addRow("模型名", self.lcp_model)
-        layout.addRow(gb_lcp)
-
-        gb_tf = QGroupBox("Transformers 后端（独立 Python 3.11 环境 + 本地服务）")
-        tl = QFormLayout(gb_tf)
+        # --- 子页面二：Transformers（独立 Python 3.11 环境 + 本地服务）---
+        page_tf = QWidget()
+        tl = QFormLayout(page_tf)
         self.tf_url = QLineEdit(cfg.tf_url)
         self.tf_url.setPlaceholderText("http://localhost:8001")
         self.tf_python = QLineEdit(cfg.tf_python)
@@ -158,54 +159,38 @@ class SettingsDialog(QDialog):
         tl.addRow("服务地址", self.tf_url)
         tl.addRow("Python 解释器", self.tf_python)
         tl.addRow("模型目录", self.tf_model)
-        tl.addRow("量化", self.tf_quant)
-        layout.addRow(gb_tf)
+        tl.addRow("量化精度", self.tf_quant)
+        gb_mp_tf, mp_tf = self._make_model_params_group()
+        tl.addRow(gb_mp_tf)
+        self.stack.addWidget(page_tf)
 
+        # --- 子页面三：llama.cpp（本地 llama-server）---
+        page_lcp = QWidget()
+        lcl = QFormLayout(page_lcp)
+        self.lcp_url = QLineEdit(cfg.llama_cpp_url)
+        self.lcp_model = QLineEdit(cfg.llama_cpp_model)
         self.resolution = QComboBox()
         self.resolution.addItems(list(RESOLUTION_MODES.keys()))
         self.resolution.setCurrentText(cfg.resolution)
+        lcl.addRow("服务地址", self.lcp_url)
+        lcl.addRow("模型名", self.lcp_model)
+        lcl.addRow("分辨率模式", self.resolution)
+        gb_mp_l, mp_l = self._make_model_params_group()
+        lcl.addRow(gb_mp_l)
+        self.stack.addWidget(page_lcp)
+
+        self._mp_widgets = {
+            "ollama": mp_o,
+            "transformers": mp_tf,
+            "llama_cpp": mp_l,
+        }
+        layout.addRow(self.stack)
+        self._on_backend_changed(self.backend.currentText())
+
+        # 通用（所有后端共享）
         self.output_dir = QLineEdit(cfg.output_dir)
         self.output_dir.setPlaceholderText("（空=与输入文件同目录）")
-        layout.addRow("分辨率模式", self.resolution)
         layout.addRow("导出目录", self.output_dir)
-
-        # 模型采样参数（高级）：作用于 llama.cpp 本地引擎；默认值即已验证的“不退化”组合。
-        gb_mp = QGroupBox("模型参数（llama.cpp，高级）")
-        mpl = QFormLayout(gb_mp)
-        self.mp_temperature = QDoubleSpinBox()
-        self.mp_temperature.setRange(0.0, 2.0)
-        self.mp_temperature.setSingleStep(0.05)
-        self.mp_temperature.setValue(cfg.model_params.temperature)
-        self.mp_temperature.setToolTip("贪心确定性采样必须保持 0；temp>0 会让密集页随机退化/整篇重列。")
-        mpl.addRow("temperature（贪心，保持 0）", self.mp_temperature)
-        self.mp_repeat_penalty = QDoubleSpinBox()
-        self.mp_repeat_penalty.setRange(0.8, 1.5)
-        self.mp_repeat_penalty.setSingleStep(0.01)
-        self.mp_repeat_penalty.setValue(cfg.model_params.repeat_penalty)
-        mpl.addRow("repeat_penalty", self.mp_repeat_penalty)
-        self.mp_repeat_last_n = QSpinBox()
-        self.mp_repeat_last_n.setRange(0, 8192)
-        self.mp_repeat_last_n.setSingleStep(64)
-        self.mp_repeat_last_n.setValue(cfg.model_params.repeat_last_n)
-        self.mp_repeat_last_n.setSpecialValueText("默认(64)")
-        self.mp_repeat_last_n.setToolTip("惩罚回看窗口；默认 4096 才能抑制“整篇重列”长程退化。0=引擎默认。")
-        mpl.addRow("repeat_last_n", self.mp_repeat_last_n)
-        self.mp_max_tokens = QSpinBox()
-        self.mp_max_tokens.setRange(256, 65536)
-        self.mp_max_tokens.setSingleStep(256)
-        self.mp_max_tokens.setValue(cfg.model_params.max_tokens)
-        mpl.addRow("max_tokens", self.mp_max_tokens)
-        # 参数预设：一键套用一组经验值（不引入自动调参）
-        self.preset_combo = QComboBox()
-        self.preset_combo.addItem("（自定义）")
-        for name in MODEL_PARAM_PRESETS:
-            self.preset_combo.addItem(name)
-        self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
-        mpl.addRow("快速预设", self.preset_combo)
-        self.btn_apply_last = QPushButton("应用上次成功参数（模型）")
-        self.btn_apply_last.clicked.connect(self._apply_last_success)
-        mpl.addRow(self.btn_apply_last)
-        layout.addRow(gb_mp)
 
         # 上次成功复用开关
         self.auto_reuse = QCheckBox("启动时自动套用上次成功参数（模型参数 + 输出格式）")
@@ -221,24 +206,78 @@ class SettingsDialog(QDialog):
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
 
-    def _on_preset_changed(self, name):
+    def _on_backend_changed(self, text):
+        """顶部下拉切换后端时，QStackedWidget 仅显示匹配的子页面。"""
+        idx = self.backend.findText(text)
+        if idx < 0:
+            idx = 0
+        self.stack.setCurrentIndex(idx)
+
+    def _make_model_params_group(self):
+        """构建一组“模型参数”控件，供每个后端子页各放一份（互不干扰）。
+
+        默认值来自 cfg.model_params；预设 / 应用上次成功 仅作用于本组控件。
+        """
+        gb = QGroupBox("模型参数（传给模型的采样参数）")
+        fl = QFormLayout(gb)
+        temperature = QDoubleSpinBox()
+        temperature.setRange(0.0, 2.0)
+        temperature.setSingleStep(0.05)
+        temperature.setValue(self.cfg.model_params.temperature)
+        temperature.setToolTip("贪心确定性采样必须保持 0；temp>0 会让密集页随机退化/整篇重列。")
+        fl.addRow("temperature（贪心，保持 0）", temperature)
+        repeat_penalty = QDoubleSpinBox()
+        repeat_penalty.setRange(0.8, 1.5)
+        repeat_penalty.setSingleStep(0.01)
+        repeat_penalty.setValue(self.cfg.model_params.repeat_penalty)
+        fl.addRow("repeat_penalty", repeat_penalty)
+        repeat_last_n = QSpinBox()
+        repeat_last_n.setRange(0, 8192)
+        repeat_last_n.setSingleStep(64)
+        repeat_last_n.setValue(self.cfg.model_params.repeat_last_n)
+        repeat_last_n.setSpecialValueText("默认(64)")
+        repeat_last_n.setToolTip("惩罚回看窗口；默认 4096 才能抑制“整篇重列”长程退化。0=引擎默认。")
+        fl.addRow("repeat_last_n", repeat_last_n)
+        max_tokens = QSpinBox()
+        max_tokens.setRange(256, 65536)
+        max_tokens.setSingleStep(256)
+        max_tokens.setValue(self.cfg.model_params.max_tokens)
+        fl.addRow("max_tokens", max_tokens)
+        preset = QComboBox()
+        preset.addItem("（自定义）")
+        for name in MODEL_PARAM_PRESETS:
+            preset.addItem(name)
+        preset.currentTextChanged.connect(
+            lambda name, t=temperature, rp=repeat_penalty, rln=repeat_last_n, mt=max_tokens:
+                self._apply_preset(name, t, rp, rln, mt)
+        )
+        fl.addRow("快速预设", preset)
+        apply_btn = QPushButton("应用上次成功参数（模型）")
+        apply_btn.clicked.connect(
+            lambda _=False, t=temperature, rp=repeat_penalty, rln=repeat_last_n, mt=max_tokens:
+                self._apply_last_success_to(t, rp, rln, mt)
+        )
+        fl.addRow(apply_btn)
+        return gb, (temperature, repeat_penalty, repeat_last_n, max_tokens)
+
+    def _apply_preset(self, name, temperature, repeat_penalty, repeat_last_n, max_tokens):
         preset = MODEL_PARAM_PRESETS.get(name)
         if preset is None:
             return
-        self.mp_temperature.setValue(preset.temperature)
-        self.mp_repeat_penalty.setValue(preset.repeat_penalty)
-        self.mp_repeat_last_n.setValue(preset.repeat_last_n)
-        self.mp_max_tokens.setValue(preset.max_tokens)
+        temperature.setValue(preset.temperature)
+        repeat_penalty.setValue(preset.repeat_penalty)
+        repeat_last_n.setValue(preset.repeat_last_n)
+        max_tokens.setValue(preset.max_tokens)
 
-    def _apply_last_success(self):
+    def _apply_last_success_to(self, temperature, repeat_penalty, repeat_last_n, max_tokens):
         snap = usage_log.last_success_snapshot()
         mp = (snap or {}).get("model_params")
         if not isinstance(mp, dict):
             return
-        self.mp_temperature.setValue(float(mp.get("temperature", 0.0)))
-        self.mp_repeat_penalty.setValue(float(mp.get("repeat_penalty", 1.10)))
-        self.mp_repeat_last_n.setValue(int(mp.get("repeat_last_n", 4096)))
-        self.mp_max_tokens.setValue(int(mp.get("max_tokens", 16384)))
+        temperature.setValue(float(mp.get("temperature", 0.0)))
+        repeat_penalty.setValue(float(mp.get("repeat_penalty", 1.10)))
+        repeat_last_n.setValue(int(mp.get("repeat_last_n", 4096)))
+        max_tokens.setValue(int(mp.get("max_tokens", 16384)))
 
     def get_config(self) -> Config:
         self.cfg.backend = self.backend.currentText()
@@ -252,11 +291,13 @@ class SettingsDialog(QDialog):
         self.cfg.tf_quant = self.tf_quant.currentText()
         self.cfg.resolution = self.resolution.currentText()
         self.cfg.output_dir = self.output_dir.text().strip()
+        # 模型参数：仅读取“当前选中后端”那一页的控件（其余子页隐藏）。
+        _t, _rp, _rln, _mt = self._mp_widgets[self.cfg.backend]
         self.cfg.model_params = ModelParams(
-            temperature=self.mp_temperature.value(),
-            repeat_penalty=self.mp_repeat_penalty.value(),
-            repeat_last_n=self.mp_repeat_last_n.value(),
-            max_tokens=self.mp_max_tokens.value(),
+            temperature=_t.value(),
+            repeat_penalty=_rp.value(),
+            repeat_last_n=_rln.value(),
+            max_tokens=_mt.value(),
         )
         self.cfg.auto_reuse_last_success = self.auto_reuse.isChecked()
         return self.cfg
@@ -298,8 +339,6 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("主工具栏")
         self.addToolBar(toolbar)
         for text, slot in [
-            ("打开文件", self.open_files),
-            ("打开文件夹", self.open_folder),
             ("转换选中", self.convert_selected),
             ("转换全部", self.convert_all),
             ("导出", self.export_selected),
@@ -319,8 +358,21 @@ class MainWindow(QMainWindow):
         self.template_combo.currentIndexChanged.connect(self._on_template_changed)
         toolbar.addWidget(self.template_combo)
 
-        # 列表管理（仅文档级：一级节点）：删除 / 上移 / 下移 / 清空
-        toolbar.addWidget(QLabel("  |  列表："))
+        # 列表操作控件（打开文件/打开文件夹/删除/上移/下移/清空）已移至左侧“待转换文档”上方。
+
+        split = QSplitter(Qt.Orientation.Horizontal)
+
+        # 左：树形文档列表（顶层=源文件，子项=页）+ 预览
+        left = QWidget()
+        lv = QVBoxLayout(left)
+
+        # 列表操作区（添加 + 文档级管理）：置于“待转换文档”树形上方
+        list_bar = QHBoxLayout()
+        list_bar.addWidget(QLabel("列表操作："))
+        self.btn_open_files = QPushButton("打开文件")
+        self.btn_open_files.clicked.connect(self.open_files)
+        self.btn_open_folder = QPushButton("打开文件夹")
+        self.btn_open_folder.clicked.connect(self.open_folder)
         self.btn_delete = QPushButton("删除")
         self.btn_delete.clicked.connect(self.delete_selected)
         self.btn_up = QPushButton("上移")
@@ -329,14 +381,11 @@ class MainWindow(QMainWindow):
         self.btn_down.clicked.connect(lambda: self.move_selected(1))
         self.btn_clear = QPushButton("清空")
         self.btn_clear.clicked.connect(self.clear_all)
-        for b in (self.btn_delete, self.btn_up, self.btn_down, self.btn_clear):
-            toolbar.addWidget(b)
+        for b in (self.btn_open_files, self.btn_open_folder, self.btn_delete,
+                  self.btn_up, self.btn_down, self.btn_clear):
+            list_bar.addWidget(b)
+        lv.addLayout(list_bar)
 
-        split = QSplitter(Qt.Orientation.Horizontal)
-
-        # 左：树形文档列表（顶层=源文件，子项=页）+ 预览
-        left = QWidget()
-        lv = QVBoxLayout(left)
         self.tree_widget = QTreeWidget()
         self.tree_widget.setHeaderLabel("待转换文档（源文件 / 页面）")
         self.tree_widget.setSelectionMode(

@@ -141,6 +141,9 @@ def main():
     assert "[b#1] 内容" in txt
     print("PASS - 未多选但聚焦某页 -> 导出该页")
 
+    # offscreen 下解释器退出时 Qt 对象析构竞态可能崩溃，显式销毁窗口（app 仍存活）
+    w.deleteLater()
+    app.processEvents()
     print("ALL PASS: test_export_selected")
 
 

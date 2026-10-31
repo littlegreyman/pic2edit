@@ -99,6 +99,9 @@ def main():
     assert w.tree_widget.topLevelItemCount() == 0
     assert w.btn_clear.isEnabled() is False
 
+    # offscreen 下解释器退出时 Qt 对象析构竞态可能崩溃，显式销毁窗口（app 仍存活）
+    w.deleteLater()
+    app.processEvents()
     print("ALL PASS: test_gui_list_mgmt")
 
 
