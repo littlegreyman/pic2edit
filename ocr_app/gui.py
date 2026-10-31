@@ -3,7 +3,7 @@ import os
 import tempfile
 import logging
 
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtCore import Qt, Signal, QObject, QThread
 from PySide6.QtGui import QPixmap, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
@@ -22,6 +22,7 @@ from worker import OcrWorker
 from utils.input_prep import prepare_input, InputItem
 from utils.export_docx import md_to_docx, save_text
 from utils.logging_setup import get_logger, log_env_on_error
+from utils.app_home import resource_path
 
 _logger = get_logger("gui")
 
@@ -43,6 +44,69 @@ class GuiLogHandler(logging.Handler):
         except Exception:
             msg = record.getMessage()
         self._emitter.sig.emit(msg)
+
+
+class _StreamToSignal:
+    """把 stdout/stderr 写入重定向到 Qt 信号（按行缓冲）。"""
+    def __init__(self, emit):
+        self._emit = emit
+        self._buf = ""
+
+    def write(self, text):
+        self._buf += text
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            if line.strip():
+                self._emit(line.rstrip("\r"))
+
+    def flush(self):
+        if self._buf.strip():
+            self._emit(self._buf.rstrip("\r"))
+            self._buf = ""
+
+
+class DownloadThread(QThread):
+    """后台下载官方 llama.cpp 引擎 + DeepSeek-OCR GGUF 到安装根目录（data_root）。"""
+    log_line = Signal(str)
+    finished = Signal(bool, str)
+
+    def run(self):
+        import sys
+        old_out, old_err = sys.stdout, sys.stderr
+        sys.stdout = sys.stderr = _StreamToSignal(self.log_line.emit)
+        try:
+            from download_models import download_all
+            ok = download_all()
+        except Exception as e:
+            self.log_line.emit("[!] 下载异常: %r" % e)
+            ok = False
+        finally:
+            sys.stdout, sys.stderr = old_out, old_err
+        self.finished.emit(bool(ok), "" if ok else "下载失败，详见上方日志")
+
+
+class DownloadDialog(QDialog):
+    """下载进度对话框：实时显示 download_models 的日志，完成时自动关闭。"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("下载模型 / 引擎")
+        self.resize(560, 360)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("正在下载 DeepSeek-OCR 引擎与模型（约 2GB，请保持联网）。\n"
+                               "下载完成后会自动关闭本窗口，无需点击。请勿关闭程序。"))
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setStyleSheet("border:1px solid #ccc; background:#fafafa; "
+                               "font-family:Consolas,monospace; font-size:10px;")
+        layout.addWidget(self.log, 1)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)  # 不确定模式（下载无总大小）
+        layout.addWidget(self.progress)
+
+    def append(self, line):
+        self.log.appendPlainText(line)
+        sb = self.log.verticalScrollBar()
+        sb.setValue(sb.maximum())
 
 
 SUPPORTED = (".jpg", ".jpeg", ".tif", ".tiff", ".pdf", ".png", ".bmp", ".webp")
@@ -134,11 +198,8 @@ class MainWindow(QMainWindow):
         self.work_dir = tempfile.mkdtemp(prefix="pic2edit_")
         self.backend = self._build_backend()
 
-        # 窗口图标（项目根目录的 logo；打包后资源路径另行处理）
-        icon_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "pic2edit-logo.png",
-        )
+        # 窗口图标（logo 随包收集；开发态在项目根，冻结态在 sys._MEIPASS）
+        icon_path = resource_path("pic2edit-logo.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
@@ -156,6 +217,7 @@ class MainWindow(QMainWindow):
             ("转换选中", self.convert_selected),
             ("转换全部", self.convert_all),
             ("导出", self.export_current),
+            ("下载模型", self.open_download),
             ("设置", self.open_settings),
         ]:
             btn = QPushButton(text)
@@ -410,12 +472,27 @@ class MainWindow(QMainWindow):
                          "且服务地址/模型名正确。",
             "transformers": "请确认已用 download_models_tf.bat 建好 .venv_tf 并下载模型，且已运行 run_transformers_server.bat 启动本地服务（默认 http://localhost:8001）。",
         }
+        ready = self._engine_and_model_ready()
         msg = f"当前后端 [{self.backend.name}] 不可用。\n{hints.get(self.backend.name, '')}"
         if detail:
             msg += "\n\n自动启动失败详情：\n" + detail
+        if self.backend.name == "llama_cpp" and not ready:
+            msg += "\n\n提示：本地尚未就绪，可点击“下载模型/引擎”按钮自动下载（需联网，约 2GB）。"
         _logger.warning("backend [%s] unavailable; detail=%s", self.backend.name, detail)
         log_env_on_error(_logger, self.cfg, extra=f"detail={detail}")
-        QMessageBox.warning(self, "后端不可用", msg)
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("后端不可用")
+        box.setText(msg)
+        btn_ok = box.addButton(QMessageBox.StandardButton.Ok)
+        btn_dl = None
+        if self.backend.name == "llama_cpp" and not ready:
+            btn_dl = QPushButton("下载模型/引擎")
+            box.addButton(btn_dl, QMessageBox.ButtonRole.ActionRole)
+        box.exec()
+        if btn_dl is not None and box.clickedButton() == btn_dl:
+            self.open_download()
 
     def _on_progress(self, n, total, name):
         self.progress.setMaximum(total)
@@ -470,6 +547,57 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"导出失败：{e}")
             _logger.exception("export failed")
             QMessageBox.critical(self, "导出失败", str(e))
+
+    # ---------- 模型/引擎下载 ----------
+    def _engine_and_model_ready(self):
+        """检查本地 llama.cpp 引擎与 GGUF 模型是否已就绪。"""
+        try:
+            import run_llamacpp_server as rls
+            exe, model, _ = rls.discover()
+            return bool(exe and model)
+        except Exception:
+            return False
+
+    def open_download(self):
+        """打开下载对话框，后台拉取官方 llama.cpp 引擎 + DeepSeek-OCR GGUF。"""
+        if self._engine_and_model_ready():
+            ret = QMessageBox.question(
+                self, "模型已就绪",
+                "本地已有 llama.cpp 引擎与模型。是否仍要重新下载？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if ret != QMessageBox.StandardButton.Yes:
+                return
+
+        dlg = DownloadDialog(self)
+        thread = DownloadThread()
+        self._dl_thread = thread  # 防止被 GC
+        thread.log_line.connect(dlg.append)
+        thread.finished.connect(lambda ok, msg: self._on_download_finished(ok, msg, dlg))
+        dlg.show()
+        thread.start()
+
+    def _on_download_finished(self, ok, msg, dlg):
+        dlg.append("")
+        if ok:
+            dlg.append("[完成] 引擎与模型已就绪。现在可以开始转换（首次转换会自动拉起本地引擎）。")
+            dlg.progress.setRange(0, 1)
+            dlg.progress.setValue(1)
+            QMessageBox.information(
+                self, "下载完成",
+                "DeepSeek-OCR 引擎与模型已下载到程序目录。\n"
+                "现在可直接转换；若后端未启动，转换时会自动拉起本地引擎。"
+            )
+        else:
+            dlg.append("[失败] " + (msg or "下载未完成。"))
+            dlg.progress.setRange(0, 1)
+            dlg.progress.setValue(0)
+            QMessageBox.warning(self, "下载失败", msg or "下载未完成，请查看上方日志或手动下载。")
+        # 下载完成后允许用户关闭对话框
+        dlg.setWindowTitle("下载完成" if ok else "下载失败")
+        close_btn = QPushButton("关闭")
+        close_btn.clicked.connect(dlg.accept)
+        dlg.layout().addWidget(close_btn)
 
     # ---------- 设置 ----------
     def open_settings(self):

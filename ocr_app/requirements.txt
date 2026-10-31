@@ -8,6 +8,11 @@ markdown>=3.5
 python-docx>=1.1
 huggingface_hub>=0.23   # used by download_models.bat to pull GGUF models
 
+# 冻结态（PyInstaller 打包）所需：RapidOCR 进程内判别式 OCR 引擎及其 ONNX 运行时。
+# 仅打包时需要；开发态下判别式后端走独立 .venv_ocr 子进程，不依赖这里。
+rapidocr_onnxruntime>=1.3
+onnxruntime>=1.17
+
 # 注意：Transformers 后端需要独立的 Python 3.11 环境（避开 3.13 缺 wheel 的问题），
 # 并在该环境中额外安装：torch(torchvision) + transformers + accelerate + bitsandbytes + einops + sentencepiece
 # 详见 README.md 的“Transformers 后端”一节。

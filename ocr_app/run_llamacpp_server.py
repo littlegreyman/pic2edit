@@ -30,7 +30,11 @@ import threading
 import subprocess
 import urllib.request
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# 引擎/模型目录：冻结态跟随安装盘（dirty install root），开发态为 ocr_app/ 下。
+# 单文件夹冻结模式下 __file__ 指向临时解压目录，必须用 data_root() 定位。
+from utils.app_home import data_root
+
+HERE = data_root()
 BIN_DIR = os.path.join(HERE, "bin")
 MODELS_DIR = os.path.join(HERE, "models")
 PORT = "8080"

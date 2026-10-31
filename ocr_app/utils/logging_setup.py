@@ -18,7 +18,10 @@ import os
 import platform
 import sys
 
-LOG_DIR = os.path.join(os.path.expanduser("~"), ".pic2edit")
+from utils.app_home import writable_app_home
+
+# 日志目录：冻结态跟随安装盘，开发态为 ~/.pic2edit。
+LOG_DIR = writable_app_home()
 LOG_FILE = os.path.join(LOG_DIR, "pic2edit.log")
 LOGGER_NAME = "pic2edit"
 

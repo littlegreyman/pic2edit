@@ -29,3 +29,11 @@ ocr_app/test_ocr_sample.docx
 # 操作系统 / 编辑器
 Thumbs.db
 .DS_Store
+
+# PyInstaller 构建产物（exe 由打包脚本生成，不入库）
+dist/
+build/
+installer_out/
+
+# 打包时预热的 RapidOCR onnx 模型（若落地到 ocr_app/rapidocr_models，随包收集，不入库）
+ocr_app/rapidocr_models/

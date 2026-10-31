@@ -21,7 +21,12 @@ import platform
 import urllib.request
 import urllib.error
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# 引擎/模型目录：冻结态跟随安装盘（dirty install root），开发态为 ocr_app/ 下。
+# 注意：单文件夹冻结模式下 __file__ 指向临时解压目录，绝不能用 dirname(__file__)
+# 来确定需要持久化的模型/引擎位置。
+from utils.app_home import data_root
+
+HERE = data_root()
 BIN_DIR = os.path.join(HERE, "bin")
 MODELS_DIR = os.path.join(HERE, "models")
 
@@ -274,10 +279,15 @@ def model_ready():
 
 
 # ---------------- 主流程 ----------------
-def main():
+def run():
+    """下载官方 llama.cpp 引擎 + DeepSeek-OCR GGUF 到 data_root()。
+
+    返回 0 表示成功，1 表示失败（不调用 sys.exit，便于被 GUI 线程复用）。
+    """
     system, machine = detect_platform()
     print(f"[info] platform: system={system} machine={machine}")
     print(f"[info] REPO={REPO} TAG={TAG}")
+    print(f"[info] install root (bin/models): {HERE}")
 
     os.makedirs(BIN_DIR, exist_ok=True)
 
@@ -302,13 +312,13 @@ def main():
             print("[!] could not determine the engine archive for this platform.")
             print("    Please download it manually from:")
             print(f"      https://github.com/{REPO}/releases/tag/{TAG}")
-            sys.exit(1)
+            return 1
 
         archive = os.path.join(BIN_DIR, name)
         if not download_file(url, archive, name):
             print("[!] engine download failed from all mirrors.")
             print(f"    Manual: open {url} and extract llama-server into bin/")
-            sys.exit(1)
+            return 1
 
         extract_archive(archive, BIN_DIR)
         os.remove(archive)
@@ -327,7 +337,7 @@ def main():
         exe = gather_libs(BIN_DIR)
         if not exe:
             print("[!] llama-server not found after extraction.")
-            sys.exit(1)
+            return 1
         print(f"[ok] engine ready: {exe}")
 
     # ---- 2) 模型 ----
@@ -338,11 +348,21 @@ def main():
         if not download_model():
             print("[!] model download failed. You can place the GGUF + mmproj into models/ manually,")
             print("    then just run run_llamacpp_server.py (it only needs models/ to exist).")
-            sys.exit(1)
+            return 1
 
     print("\nDONE. Next steps (fully local afterwards):")
     print("  1) run_llamacpp_server.py  (or run_llamacpp_server.bat / .sh)  <- local OCR server on :8080")
     print("  2) main.py  (or the GUI launcher)  <- opens the GUI (backend=llama_cpp)")
+    return 0
+
+
+def download_all():
+    """GUI 用：下载引擎+模型，返回是否成功（True/False）。"""
+    return run() == 0
+
+
+def main():
+    sys.exit(run())
 
 
 if __name__ == "__main__":

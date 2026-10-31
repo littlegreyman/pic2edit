@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication
 
 from gui import MainWindow
 from utils.logging_setup import setup_logging
+from utils.app_home import writable_app_home
 
 
 def _install_crash_log():
@@ -15,10 +16,11 @@ def _install_crash_log():
 
     之前 GUI 崩溃时只闪退、没有任何落盘记录（用户反馈“报错来不及看”）。这里用
     faulthandler 捕获 C 级崩溃（segfault / access violation），用 sys.excepthook
-    捕获 Python 未处理异常，都追加写到 ~/.pic2edit/pic2edit_crash.log。
+    捕获 Python 未处理异常，都追加写到 pic2edit_crash.log（冻结态跟随安装盘，
+    开发态为 ~/.pic2edit）。
     """
     try:
-        log_dir = os.path.join(os.path.expanduser("~"), ".pic2edit")
+        log_dir = writable_app_home()
         os.makedirs(log_dir, exist_ok=True)
         crash_log = os.path.join(log_dir, "pic2edit_crash.log")
         fh = open(crash_log, "a", encoding="utf-8")

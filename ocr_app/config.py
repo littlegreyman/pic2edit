@@ -6,7 +6,10 @@ import json
 import os
 from dataclasses import dataclass, field, asdict
 
-CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".pic2edit")
+from utils.app_home import writable_app_home
+
+# 配置目录：冻结态跟随安装盘（dirty install root），开发态为 ~/.pic2edit。
+CONFIG_DIR = writable_app_home()
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
 RESOLUTION_MODES = {

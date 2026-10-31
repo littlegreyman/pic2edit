@@ -14,7 +14,10 @@ import urllib.request
 
 from PySide6.QtCore import QThread, Signal
 
-OCR_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from utils.app_home import data_root
+
+# 应用根目录：冻结态 = 安装根（引擎/模型/脚本都随之），开发态 = ocr_app/。
+OCR_APP_DIR = data_root()
 
 
 class ServerStarter(QThread):
