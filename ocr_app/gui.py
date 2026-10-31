@@ -10,12 +10,12 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QLabel, QTextEdit, QTextBrowser, QTabWidget,
     QToolBar, QFileDialog, QMessageBox, QProgressBar, QPushButton, QDialog,
     QFormLayout, QComboBox, QLineEdit, QDialogButtonBox, QGroupBox, QPlainTextEdit,
-    QProgressDialog,
+    QProgressDialog, QDoubleSpinBox, QSpinBox,
 )
 
 import markdown
 
-from config import Config, RESOLUTION_MODES, PROMPT_LABELS
+from config import Config, RESOLUTION_MODES, PROMPT_LABELS, ModelParams
 from backends import OllamaBackend, TransformersBackend, LlamaCppBackend
 from backends.server_launcher import ServerStarter
 from worker import OcrWorker
@@ -168,6 +168,34 @@ class SettingsDialog(QDialog):
         layout.addRow("分辨率模式", self.resolution)
         layout.addRow("导出目录", self.output_dir)
 
+        # 模型采样参数（高级）：作用于 llama.cpp 本地引擎；默认值即已验证的“不退化”组合。
+        gb_mp = QGroupBox("模型参数（llama.cpp，高级）")
+        mpl = QFormLayout(gb_mp)
+        self.mp_temperature = QDoubleSpinBox()
+        self.mp_temperature.setRange(0.0, 2.0)
+        self.mp_temperature.setSingleStep(0.05)
+        self.mp_temperature.setValue(cfg.model_params.temperature)
+        self.mp_temperature.setToolTip("贪心确定性采样必须保持 0；temp>0 会让密集页随机退化/整篇重列。")
+        mpl.addRow("temperature（贪心，保持 0）", self.mp_temperature)
+        self.mp_repeat_penalty = QDoubleSpinBox()
+        self.mp_repeat_penalty.setRange(0.8, 1.5)
+        self.mp_repeat_penalty.setSingleStep(0.01)
+        self.mp_repeat_penalty.setValue(cfg.model_params.repeat_penalty)
+        mpl.addRow("repeat_penalty", self.mp_repeat_penalty)
+        self.mp_repeat_last_n = QSpinBox()
+        self.mp_repeat_last_n.setRange(0, 8192)
+        self.mp_repeat_last_n.setSingleStep(64)
+        self.mp_repeat_last_n.setValue(cfg.model_params.repeat_last_n)
+        self.mp_repeat_last_n.setSpecialValueText("默认(64)")
+        self.mp_repeat_last_n.setToolTip("惩罚回看窗口；默认 4096 才能抑制“整篇重列”长程退化。0=引擎默认。")
+        mpl.addRow("repeat_last_n", self.mp_repeat_last_n)
+        self.mp_max_tokens = QSpinBox()
+        self.mp_max_tokens.setRange(256, 65536)
+        self.mp_max_tokens.setSingleStep(256)
+        self.mp_max_tokens.setValue(cfg.model_params.max_tokens)
+        mpl.addRow("max_tokens", self.mp_max_tokens)
+        layout.addRow(gb_mp)
+
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -187,6 +215,12 @@ class SettingsDialog(QDialog):
         self.cfg.tf_quant = self.tf_quant.currentText()
         self.cfg.resolution = self.resolution.currentText()
         self.cfg.output_dir = self.output_dir.text().strip()
+        self.cfg.model_params = ModelParams(
+            temperature=self.mp_temperature.value(),
+            repeat_penalty=self.mp_repeat_penalty.value(),
+            repeat_last_n=self.mp_repeat_last_n.value(),
+            max_tokens=self.mp_max_tokens.value(),
+        )
         return self.cfg
 
 
@@ -325,7 +359,8 @@ class MainWindow(QMainWindow):
             return TransformersBackend(self.cfg.tf_url, "deepseek-ocr-local")
         if self.cfg.backend == "llama_cpp":
             _logger.info("backend selected: llama_cpp (url=%s)", self.cfg.llama_cpp_url)
-            return LlamaCppBackend(self.cfg.llama_cpp_url, self.cfg.llama_cpp_model)
+            return LlamaCppBackend(self.cfg.llama_cpp_url, self.cfg.llama_cpp_model,
+                                  self.cfg.model_params)
         _logger.info("backend selected: ollama (url=%s)", self.cfg.ollama_url)
         return OllamaBackend(self.cfg.ollama_url, self.cfg.ollama_model)
 
@@ -683,6 +718,7 @@ class MainWindow(QMainWindow):
             self.backend, self.items, self.cfg.prompt(), indices,
             as_table=(self.cfg.prompt_template == "table"),
             prompt_template=self.cfg.prompt_template,
+            model_params=self.cfg.model_params,
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.item_done.connect(self._on_item_done)

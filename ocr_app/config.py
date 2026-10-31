@@ -51,6 +51,25 @@ PROMPT_LABELS = {
 
 
 @dataclass
+class ModelParams:
+    """模型采样参数（主要作用于 llama.cpp 本地引擎）。
+
+    默认值即已用真机反复验证的“不退化”组合：
+    - temperature=0    贪心/确定性（temp>0 会让 DeepSeek-OCR 随机退化、整篇重列）；
+    - repeat_penalty=1.10  比默认 1.0 强、又不会像 1.15+ 那样提前吐 EOS/英文乱入；
+    - repeat_last_n=4096   关键：默认 64 只往后看 64 token，对“整篇重列”长程退化无效，
+                          放大到 4096 才真正抑制；
+    - max_tokens=16384   给完整文档留余量（贪心不会 runaway）。
+    repeat_last_n=0 表示交给引擎默认（不强制）。
+    """
+
+    temperature: float = 0.0
+    repeat_penalty: float = 1.10
+    repeat_last_n: int = 4096
+    max_tokens: int = 16384
+
+
+@dataclass
 class Config:
     backend: str = "llama_cpp"         # "ollama" | "transformers" | "llama_cpp"
     # Ollama 后端
@@ -68,6 +87,8 @@ class Config:
     resolution: str = "Gundam"
     prompt_template: str = "markdown"
     output_dir: str = ""               # 导出目录，空则用输入文件同目录
+    # 模型采样参数（GUI 设置面板可改；默认值见 ModelParams 说明）
+    model_params: ModelParams = field(default_factory=ModelParams)
 
     def save(self):
         os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -84,7 +105,10 @@ class Config:
             cfg = cls()
             for k, v in data.items():
                 if hasattr(cfg, k):
-                    setattr(cfg, k, v)
+                    if k == "model_params" and isinstance(v, dict):
+                        cfg.model_params = ModelParams(**v)
+                    else:
+                        setattr(cfg, k, v)
             return cfg
         except Exception:
             return cls()

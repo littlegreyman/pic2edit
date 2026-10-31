@@ -94,7 +94,8 @@ class ServerStarter(QThread):
         if not model:
             self._fail("未找到 models/*.gguf 模型。请先运行 download_models.bat 下载模型。")
             return
-        cmd = rls.build_command(exe, model, mmproj)
+        cmd = rls.build_command(exe, model, mmproj,
+                                getattr(self.cfg, "model_params", None))
         self.log.emit("[launch] " + " ".join(cmd))
         self.log.emit("[wait] 正在把模型加载进显存（首次约 1–3 分钟），请稍候…")
         try:

@@ -17,7 +17,8 @@ class OcrWorker(QThread):
     error = Signal(str)
 
     def __init__(self, backend: OCRBackend, items: list, prompt: str, indices: list,
-                 as_table: bool = False, prompt_template: str = "markdown"):
+                 as_table: bool = False, prompt_template: str = "markdown",
+                 model_params=None):
         super().__init__()
         self.backend = backend
         self.items = items
@@ -26,6 +27,7 @@ class OcrWorker(QThread):
         # 表格模式：OCR 后把“键：值”文本转成 Markdown 表格
         self.as_table = as_table
         self.prompt_template = prompt_template
+        self.model_params = model_params
         # 输出格式真正生效：
         # - 表格/图表 模式跳过判别式（RapidOCR 会压平/漏识别表格与图，交由 VLM 原生输出）；
         # - 图表/公式模式下关闭英文 boilerplate 幻觉守卫（公式/化学符号等含拉丁字符属正常）。
@@ -56,6 +58,8 @@ class OcrWorker(QThread):
                     prompt=self.prompt,
                     # 图表/公式模式关闭幻觉守卫（正常公式/符号含拉丁字符，不应被误判丢弃）
                     guard_hallucination=self.guard,
+                    # 把配置化的模型采样参数传给 VLM（llama.cpp 在请求 payload 中生效）
+                    model_params=self.model_params,
                 )
                 text = item.result
                 if self.as_table:

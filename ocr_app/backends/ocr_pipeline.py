@@ -79,7 +79,7 @@ def _looks_hallucinated(md):
 
 def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deepseek-ocr",
         use_vlm_fallback=True, mode="markdown", skip_discriminative=False,
-        prompt=None, guard_hallucination=True):
+        prompt=None, guard_hallucination=True, model_params=None):
     """填充每个 InputItem.result（Markdown）。返回 items。
 
     vlm_backend: 兜底用的 VLM 后端实例（如 LlamaCppBackend / OllamaBackend /
@@ -113,6 +113,14 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
             vlm = vlm_backend if vlm_backend.available() else None
         else:
             vlm = _vlm_backend(server_url, model)
+
+    # 把模型采样参数挂到 VLM 后端实例上（llama.cpp 在 _chat 时读取）。
+    # 缺省 None 时后端保留自身默认（= 已验证的 ModelParams 默认值）。
+    if vlm is not None and model_params is not None:
+        try:
+            vlm.model_params = model_params
+        except Exception:
+            pass
 
     # VLM 实际使用的提示词：优先用调用方传入的（来自 GUI 所选输出格式模板），
     # 为空则回退到默认中文指令。这样“图表/公式/纯文本”等输出格式才能真正影响 VLM。

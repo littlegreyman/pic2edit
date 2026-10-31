@@ -30,6 +30,8 @@ import threading
 import subprocess
 import urllib.request
 
+from config import ModelParams
+
 # 引擎/模型目录：冻结态跟随安装盘（dirty install root），开发态为 ocr_app/ 下。
 # 单文件夹冻结模式下 __file__ 指向临时解压目录，必须用 data_root() 定位。
 from utils.app_home import data_root
@@ -88,21 +90,21 @@ def discover():
     return exe, model, mmproj
 
 
-def build_command(exe, model, mmproj):
+def build_command(exe, model, mmproj, model_params=None):
     # NOTE: intentionally NOT passing --chat-template. The bare "deepseek-ocr"
     # template breaks multimodal (no auto marker / no vision binding). Let
     # llama.cpp pick the model's native template, which works correctly.
     # 生成参数（与 llamacpp_backend._chat 的请求 payload 一致，服务端/请求端双重设置）：
-    #   --repeat-penalty 1.10：轻微惩罚重复，避免过度压制导致提前 EOS/英文乱入。
-    #   --repeat-last-n 4096：**关键**。llama.cpp 默认仅 64（`--help` 明写
-    #       "last n tokens to consider for penalize (default: 64)"），只往后看 64 个
-    #       token，而“整篇从头重列”的循环周期是整篇文档（上千 token），默认窗口够不到、
-    #       对长程退化完全无效。放大到 4096 才真正抑制；flag 名已用 `--help` 核实。
+    #   --repeat-penalty / --repeat-last-n 来自 model_params（默认 1.10 / 4096）。
+    #   repeat_last_n 默认值 4096 是修复“整篇从头重列”长程退化的关键（引擎默认仅 64）；
+    #   flag 名已用 `--help` 核实。
     #   temperature 不在此设置——它由请求 payload 控制（必须 0，temp>0 会随机退化）。
+    mp = model_params or ModelParams()
     cmd = [exe, "-m", model]
     if mmproj:
         cmd += ["--mmproj", mmproj]
-    cmd += ["--repeat-penalty", "1.10", "--repeat-last-n", "4096",
+    cmd += ["--repeat-penalty", str(mp.repeat_penalty),
+            "--repeat-last-n", str(mp.repeat_last_n),
             # 关闭 KV 状态缓存复用：连发多页时缓存区易被大块多模态状态占满，
             # 触发 "failed to restore kv cache"；请求会回退重算但日志报错且拖慢。
             "--cache-reuse", "0",

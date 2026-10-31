@@ -28,6 +28,7 @@ import base64
 import requests
 
 from .base import OCRBackend
+from config import ModelParams
 from utils.logging_setup import get_logger
 from utils.text_utils import trim_trailing_repetition
 
@@ -37,9 +38,12 @@ _logger = get_logger("backends.llamacpp")
 class LlamaCppBackend(OCRBackend):
     name = "llama_cpp"
 
-    def __init__(self, base_url: str = "http://localhost:8080", model: str = "deepseek-ocr"):
+    def __init__(self, base_url: str = "http://localhost:8080", model: str = "deepseek-ocr",
+                 model_params: ModelParams = None):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        # 模型采样参数：缺省用已验证的默认值（temp=0 贪心 / rp=1.10 / rln=4096 / max=16384）
+        self.model_params = model_params or ModelParams()
 
     def available(self) -> bool:
         # llama_cpp.server (FastAPI) does not reliably expose /health across
@@ -65,23 +69,25 @@ class LlamaCppBackend(OCRBackend):
         }]
 
     def _chat(self, messages):
+        mp = self.model_params
         payload = {
             "model": self.model,
             "messages": messages,
             # 关键：temperature 必须保持 0（贪心/确定性）。实测 temp>0 会让 DeepSeek-OCR
             # 在密集页面上**随机**退化——同一组参数既能干净输出，也可能崩成“同一块重复
             # 上百次”（正是 tempo_package.jpg 偶发重列/截断的根因）。只有贪心是稳定的。
-            "temperature": 0.0,
+            "temperature": mp.temperature,
             # repeat_penalty 轻微惩罚重复（1.10，比默认 1.0 强、又不会像 1.15+ 那样
-            # 过度压制导致提前吐 EOS 并冒出英文营销语）。
-            "repeat_penalty": 1.10,
+            # 过度压制导致提前吐 EOS 并冒出英文营销语）。可在设置面板调整。
+            "repeat_penalty": mp.repeat_penalty,
             # 关键发现：默认的 repeat_last_n=64 只往后看 64 个 token，而“整篇从头重列”
             # 的循环周期是整个文档（上千 token），惩罚窗口根本够不到 —— 所以 64 对这类
             # 长程退化完全无效。把窗口放大到 4096，惩罚才能真正抑制长程复读。
             # 即便服务端启动没带 --repeat-last-n，请求里带也能覆盖默认，立即生效。
-            "repeat_last_n": 4096,
+            # repeat_last_n=0 表示遵循引擎默认（不强制）。
+            "repeat_last_n": mp.repeat_last_n,
             # 给完整文档留足余量，避免长文档被截断（贪心不会 runaway，正常几百~上千字符即停）。
-            "max_tokens": 16384,
+            "max_tokens": mp.max_tokens,
         }
         url = self.base_url + "/v1/chat/completions"
         try:
