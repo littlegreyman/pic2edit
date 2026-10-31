@@ -13,7 +13,7 @@
 ; - 开始菜单 + 桌面快捷方式；自动卸载；自定义图标。
 
 #define MyAppName "pic2edit"
-#define MyAppVersion "0.18.0"
+#define MyAppVersion "0.19.0"
 #define MyAppPublisher "pic2edit"
 #define MyAppURL "https://github.com/littlegreyman/pic2edit"
 #define MyAppExeName "pic2edit.exe"
