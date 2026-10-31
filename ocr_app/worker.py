@@ -29,9 +29,9 @@ class OcrWorker(QThread):
         self.prompt_template = prompt_template
         self.model_params = model_params
         # 输出格式真正生效：
-        # - 表格/图表 模式跳过判别式（RapidOCR 会压平/漏识别表格与图，交由 VLM 原生输出）；
+        # - 表格/图表/HTML表格 模式跳过判别式（RapidOCR 会压平/漏识别表格与图，交由 VLM 原生输出）；
         # - 图表/公式模式下关闭英文 boilerplate 幻觉守卫（公式/化学符号等含拉丁字符属正常）。
-        self.skip_disc = as_table or (prompt_template == "figure")
+        self.skip_disc = as_table or (prompt_template in ("figure", "html_table"))
         self.guard = prompt_template != "figure"
 
     def run(self):

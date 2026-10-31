@@ -39,6 +39,10 @@ PROMPT_TEMPLATES = {
     # 模式用 markdown 提示词正常 OCR，再由 utils/table_utils.py 做确定性
     # 键值→表格 后处理（worker 按 prompt_template == "table" 触发）。
     "table":    "<|grounding|>Convert the document to markdown.",
+    # “合并单元格”表格（发票等复杂表格）：让 VLM 输出带 rowspan/colspan 的 HTML 表格，
+    # 再由 utils/table_html.py 解析、export_docx 用 cell.merge() 还原合并单元格。
+    # 注意：仍需 VLM 真正吐出 HTML（普通“键：值”版式仍是 Markdown 后处理更合适）。
+    "html_table": "<|grounding|>Convert complex tables (e.g. invoices with merged cells) to HTML with rowspan/colspan.",
 }
 
 # 给 GUI 显示用的中文标签（value 为 PROMPT_TEMPLATES 的 key）
@@ -47,6 +51,7 @@ PROMPT_LABELS = {
     "ocr":      "纯文本 OCR",
     "figure":   "图表/公式",
     "table":    "表格（键值→表）",
+    "html_table": "表格（HTML/合并单元格）",
 }
 
 

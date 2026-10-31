@@ -14,6 +14,8 @@ from typing import List
 from docx import Document
 from docx.shared import Pt
 
+from .table_html import parse_html_tables, layout_table
+
 
 def save_text(text: str, out_path: str):
     with open(out_path, "w", encoding="utf-8") as f:
@@ -53,7 +55,57 @@ def md_pages_to_docx(page_texts: List[str], out_path: str, page_break: bool = Tr
     doc.save(out_path)
 
 
+def _split_html_tables(text: str):
+    """把文本切成片段：("md", 段) 或 ("html", <table>...</table>)。
+
+    用于在同一篇结果里同时支持 Markdown 与 VLM 输出的 HTML 表格（含合并单元格）。
+    """
+    out = []
+    pos = 0
+    for m in re.finditer(r"<table\b[^>]*>.*?</table>", text, re.DOTALL | re.IGNORECASE):
+        if m.start() > pos:
+            out.append(("md", text[pos:m.start()]))
+        out.append(("html", m.group(0)))
+        pos = m.end()
+    if pos < len(text):
+        out.append(("md", text[pos:]))
+    return out
+
+
+def _add_html_table(doc, html: str):
+    """把一段 HTML（可含多个 <table>）渲染为 Word 表格，支持合并单元格。"""
+    for raw in parse_html_tables(html):
+        if not raw:
+            continue
+        grid, nrows, ncols, anchors = layout_table(raw)
+        if nrows == 0 or ncols == 0:
+            continue
+        try:
+            table = doc.add_table(rows=nrows, cols=ncols)
+        except Exception:
+            continue
+        table.style = "Table Grid"
+        for (r, c, rs, cs, text) in anchors:
+            try:
+                cell = table.cell(r, c)
+                if rs > 1 or cs > 1:
+                    cell.merge(table.cell(r + rs - 1, c + cs - 1))
+                cell.text = text or ""
+            except Exception:
+                pass
+        doc.add_paragraph()
+
+
 def _populate_doc(doc, text: str):
+    """按片段填充 doc：Markdown 段走原解析；HTML <table> 段走 _add_html_table。"""
+    for kind, content in _split_html_tables(text):
+        if kind == "html":
+            _add_html_table(doc, content)
+        else:
+            _parse_md_segment(doc, content)
+
+
+def _parse_md_segment(doc, text: str):
     lines = text.splitlines()
     i = 0
     while i < len(lines):
