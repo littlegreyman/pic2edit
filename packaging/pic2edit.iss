@@ -1,6 +1,8 @@
 ; pic2edit 安装包脚本（Inno Setup）
-; 用法（需安装 Inno Setup 6，命令行 ISCC 或 GUI 打开本文件编译）：
+; 用法（需安装 Inno Setup 6 或 7，命令行 ISCC 或 GUI 打开本文件编译）：
 ;   ISCC.exe packaging\pic2edit.iss
+; 注：Languages 段用 compiler:Languages\ChineseSimplified.isl（IS7 实际路径；
+;     IS6 语言文件在根目录，若用 IS6 可改回 compiler:ChineseSimplified.isl）。
 ; 产物：installer_out\install.exe
 ;
 ; 设计要点
