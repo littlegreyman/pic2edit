@@ -13,6 +13,8 @@ PDF 渲染使用 pypdfium2（Apache-2.0），不引入 PyMuPDF（AGPL-3.0）等
 仅保留整页渲染。
 """
 import os
+from dataclasses import dataclass
+from typing import List
 
 from PIL import Image, ImageSequence
 
@@ -33,16 +35,34 @@ class InputItem:
         self.status = "待转换"     # 待转换 / 转换中 / 完成 / 失败
 
 
+@dataclass
+class InputDocument:
+    """一个源文件（图片/PDF/TIF）归并后的“文档”容器。
+
+    pages 是该文档拆出的图像项（单图=1 页；PDF/TIF=多页）。GUI 树形展示与
+    “整文档合并导出”都基于这个分组：顶层=文档，子项=页。
+    """
+
+    source_path: str          # 原始文件（PDF/TIF/图片）
+    name: str                 # 文档显示名，如 "doc.pdf"
+    pages: List["InputItem"]  # 该文档拆出的页（InputItem 列表）
+
+    @property
+    def is_multi(self) -> bool:
+        return len(self.pages) > 1
+
+
 def _safe_name(base: str, n: int) -> str:
     return f"{base}_{n:03d}.png"
 
 
-def prepare_image(path: str, work_dir: str) -> list:
+def prepare_image(path: str, work_dir: str) -> List[InputDocument]:
     name = os.path.basename(path)
     dst = os.path.join(work_dir, _safe_name(os.path.splitext(name)[0], 1))
     with Image.open(path) as im:
         im.convert("RGB").save(dst, "PNG")
-    return [InputItem(f"{name}", dst, path)]
+    item = InputItem(f"{name}", dst, path)
+    return [InputDocument(source_path=path, name=name, pages=[item])]
 
 
 def prepare_tif(path: str, work_dir: str) -> list:
@@ -58,7 +78,7 @@ def prepare_tif(path: str, work_dir: str) -> list:
             items.append(InputItem(f"{name} - 第{n}帧", dst, path))
     if not items:  # 单页兜底
         return prepare_image(path, work_dir)
-    return items
+    return [InputDocument(source_path=path, name=name, pages=items)]
 
 
 def prepare_pdf(path: str, work_dir: str, dpi: int = 200) -> list:
@@ -83,10 +103,10 @@ def prepare_pdf(path: str, work_dir: str, dpi: int = 200) -> list:
         pil.save(dst, "PNG")
         items.append(InputItem(f"{name} - 第{i + 1}页", dst, path))
     doc.close()
-    return items
+    return [InputDocument(source_path=path, name=name, pages=items)]
 
 
-def prepare_input(path: str, work_dir: str) -> list:
+def prepare_input(path: str, work_dir: str) -> List[InputDocument]:
     ext = os.path.splitext(path)[1].lower()
     if ext in (".tif", ".tiff"):
         return prepare_tif(path, work_dir)

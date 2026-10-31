@@ -213,9 +213,9 @@ def main():
     prompt = cfg.prompt()  # 例如 "<|grounding|>Convert the document to markdown."
 
     # 1) 准备输入（真实走 PDF/TIF/图片预处理，落为临时 PNG）
-    items = prepare_input(image, os.path.dirname(os.path.abspath(__file__)))
-    check("prepare_input 产出图像项", len(items) >= 1, f"共 {len(items)} 项")
-    item = items[0]
+    docs = prepare_input(image, os.path.dirname(os.path.abspath(__file__)))
+    check("prepare_input 产出文档项", len(docs) >= 1, f"共 {len(docs)} 项")
+    item = docs[0].pages[0]
     print(f"   使用图像项: {item.name} -> {item.image_path}")
     with open(item.image_path, "rb") as f:
         prepared_png = f.read()

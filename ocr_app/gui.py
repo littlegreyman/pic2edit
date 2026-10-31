@@ -193,7 +193,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.cfg = Config.load()
-        self.items: list = []
+        self.items: list = []           # 扁平图像项（供 OcrWorker / 导出使用）
+        self.documents: list = []       # 文档分组（InputDocument），供树形展示/整文档导出（P0 起）
         self.current = -1
         self.worker = None
         self.work_dir = tempfile.mkdtemp(prefix="pic2edit_")
@@ -349,14 +350,16 @@ class MainWindow(QMainWindow):
             if not os.path.isfile(p) or not p.lower().endswith(SUPPORTED):
                 continue
             try:
-                new_items = prepare_input(p, self.work_dir)
+                new_docs = prepare_input(p, self.work_dir)
             except Exception as e:
                 QMessageBox.warning(self, "导入失败", f"{p}\n{e}")
                 continue
-            for it in new_items:
-                self.items.append(it)
-                QListWidgetItem(it.name, self.list_widget)
-                added += 1
+            for doc in new_docs:
+                self.documents.append(doc)
+                for it in doc.pages:
+                    self.items.append(it)
+                    QListWidgetItem(it.name, self.list_widget)
+                    added += 1
         self.statusBar().showMessage(f"已添加 {added} 个图像项，共 {len(self.items)} 个")
         _logger.info("added %d items; total=%d", added, len(self.items))
         if self.current < 0 and self.items:

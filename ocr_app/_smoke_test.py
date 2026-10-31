@@ -76,11 +76,12 @@ if PDF_OK:
     pdf_path = os.path.join(WORK, "sample.pdf")
     with open(pdf_path, "wb") as f:
         f.write(pdf_bytes)
-    items = prepare_pdf(pdf_path, WORK)
-    check("prepare_pdf returns items", len(items) >= 1)
+    docs = prepare_pdf(pdf_path, WORK)  # 现返回 List[InputDocument]
+    check("prepare_pdf returns documents", len(docs) >= 1)
+    pdf_items = [p for d in docs for p in d.pages]
     check("prepare_pdf produced page image(s)",
-          any(it.image_path.lower().endswith(".png") for it in items))
-    for it in items:
+          any(it.image_path.lower().endswith(".png") for it in pdf_items))
+    for it in pdf_items:
         check(f"pdf item image exists: {it.name}", os.path.isfile(it.image_path))
 else:
     check("pypdfium2 available", False)
@@ -96,9 +97,9 @@ try:
         ImageDraw.Draw(im).text((5, 5), f"F{i}", fill=(0, 0, 0))
         frames.append(im)
     frames[0].save(tif_path, save_all=True, append_images=frames[1:], format="TIFF")
-    items = prepare_tif(tif_path, WORK)
-    check("prepare_tif splits 3 frames", len(items) == 3)
-    for it in items:
+    docs = prepare_tif(tif_path, WORK)  # 现返回 List[InputDocument]
+    check("prepare_tif splits 3 frames", len(docs) == 1 and len(docs[0].pages) == 3)
+    for it in docs[0].pages:
         check(f"tif frame image exists: {it.name}", os.path.isfile(it.image_path))
 except Exception as e:
     check("prepare_tif runs", False)
