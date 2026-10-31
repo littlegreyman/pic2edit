@@ -88,7 +88,7 @@
 
 | 组件 | 许可证 | 说明 |
 | --- | --- | --- |
-| **pic2edit（本项目源码与打包 GUI）** | **MIT License** | Copyright (c) 2026 michael。可自由使用、修改、分发，需保留许可证声明。 |
+| **pic2edit（本项目源码与打包 GUI）** | **MIT License** | Copyright (c) 2026 littlegreyman。可自由使用、修改、分发，需保留许可证声明。 |
 | **PySide6（Qt 官方 Python 绑定，GUI 框架）** | **LGPL-3.0** | 以动态链接方式分发（符合要求）。安装包已随附 **`THIRD_PARTY_NOTICES`**；依 LGPL，你有权将 PySide6 替换为自行编译的版本或获取其源码。 |
 | **llama.cpp（推理引擎）** | **MIT** | 官方预编译二进制，运行时下载，不随安装包内置。 |
 | **DeepSeek-OCR 模型权重** | 依模型仓库许可证 | 由 [deepseek-ai/DeepSeek-OCR](https://github.com/deepseek-ai/DeepSeek-OCR) 发布，运行时下载，**不随安装包分发**，请以其仓库许可证为准。 |
