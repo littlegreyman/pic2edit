@@ -33,7 +33,7 @@ Everything runs on your machine — no cloud, no uploads.
 - **PySide6 双栏 GUI**：左侧待转换列表 / 图像预览，右侧可编辑 Markdown（编辑 / 预览双模式），一键导出 `.md / .docx / .txt`。
 - **四种输出格式**：Markdown（默认） / 纯文本 OCR / 图表·公式 / 表格（键值→表）。
 - **针对密集页面退化做了参数调优**：贪心解码 + 长程重复惩罚，稳定不崩、不截断（详见[关键技术要点](#关键技术要点)）。
-- **跨平台**：Windows / Linux / macOS（启动与下载脚本均提供 `.bat` 与 `.sh`；Windows 双击 `launch_gui.bat`、Linux / macOS `python3 launch_gui.py` 一键启动 GUI，无需系统 PATH 上有 Python）。
+- **跨平台**：Windows / Linux / macOS（启动与下载脚本均提供 `.bat` 与 `.sh`；一键启动 GUI：Windows 双击 `launch_gui.bat`、Linux / macOS `./launch_gui.sh`，均直接调用项目自带 venv 解释器，无需系统 PATH 上有 Python）。
 
 ---
 
@@ -46,6 +46,7 @@ pic2edit/
 ├── .gitignore
 ├── launch_gui.py           # 跨平台一键启动 GUI（自动定位 ocr_app 与 venv）
 ├── launch_gui.bat          # Windows 一键启动 GUI（双击即用，直接调用 venv 解释器）
+├── launch_gui.sh           # Linux/macOS 一键启动 GUI（直接调用 venv 解释器）
 └── ocr_app/                # 应用主体
     ├── main.py             # 入口
     ├── gui.py              # PySide6 双栏主界面 + 输出格式下拉 + 运行状态面板
@@ -126,13 +127,15 @@ launch_gui.bat
 
 > 说明：若你的 Windows 没有在 PATH 上安装系统 Python（PowerShell 里输入 `python` 会跳转到微软商店占位桩），请务必用 `launch_gui.bat`——它绕开了系统 `python`，直接调用项目内的 venv 解释器。
 
-**Linux / macOS**：
+**Linux / macOS**：在仓库根目录运行（需先 `chmod +x launch_gui.sh` 一次，或始终用 `sh` 调用）：
 
 ```bash
-python3 launch_gui.py
+./launch_gui.sh          # 直接调用 venv 解释器 ocr_app/.venv/bin/python3，无需系统 PATH 上有 python
 ```
 
-> 仅想检查环境是否就绪（不启动 GUI）：`launch_gui.bat --dry-run`（Windows）或 `python3 launch_gui.py --dry-run`（Linux / macOS）。
+> 注意：现代 Linux 上往往**没有 `python` 命令**（`python3` 才有），macOS 也可能缺少 `python`。所以和 Windows 同理——请优先用 `launch_gui.sh`，它本身只依赖 `/bin/sh`，直接调用项目自带的 venv 解释器，不依赖系统 Python 版本。
+
+> 仅想检查环境是否就绪（不启动 GUI）：`launch_gui.bat --dry-run`（Windows）或 `./launch_gui.sh --dry-run`（Linux / macOS）。
 
 GUI 启动后会**按需自动拉起本地 OCR 引擎**，无需手动执行第 4 步的服务脚本。`launch_gui.py` / `.bat` 的定位优先级：环境变量 `PIC2EDIT_OCR_APP` / `PIC2EDIT_ROOT` > 从脚本位置向上查找 > 常见用户目录（`~/Documents/pic2edit`、`~/文档/pic2edit`、`~/pic2edit`、`~/projects/pic2edit`）；若项目不在这些默认位置，设置上述环境变量最稳妥。
 
@@ -244,4 +247,4 @@ DeepSeek-OCR 在 llama.cpp 上的**原生模板会自动注入 media marker** �
 
 ## 📝 版本
 
-当前为 **alpha 0.15**（参见 Git tag `alpha-0.15`）。项目仍处于早期阶段，欢迎 Issue / PR。
+当前为 **alpha 0.17**（参见 Git tag `alpha-0.17`）。项目仍处于早期阶段，欢迎 Issue / PR。
