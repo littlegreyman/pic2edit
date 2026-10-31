@@ -4,9 +4,10 @@ import sys
 import faulthandler
 import traceback
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
 from gui import MainWindow
+from about import WelcomeDialog
 from utils.logging_setup import setup_logging
 from utils.app_home import writable_app_home
 
@@ -44,6 +45,12 @@ def main():
     _install_crash_log()
     setup_logging()
     app = QApplication(sys.argv)
+    # 启动欢迎页：展示项目名/版本/开发者/发布时间/简介 + 确认键。
+    # 设置环境变量 PIC2EDIT_NO_WELCOME=1 可跳过（便于无显示环境/自动化）。
+    if not os.environ.get("PIC2EDIT_NO_WELCOME"):
+        welcome = WelcomeDialog()
+        if welcome.exec() != QDialog.DialogCode.Accepted:
+            sys.exit(0)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

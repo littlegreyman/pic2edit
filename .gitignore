@@ -29,6 +29,8 @@ ocr_app/test_ocr_sample.docx
 # 操作系统 / 编辑器
 Thumbs.db
 .DS_Store
+# Windows 快捷方式（含本机绝对路径，不入库）
+*.lnk
 
 # PyInstaller 构建产物（exe 由打包脚本生成，不入库）
 dist/
