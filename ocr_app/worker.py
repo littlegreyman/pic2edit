@@ -43,6 +43,10 @@ class OcrWorker(QThread):
                     vlm_backend=self.backend,
                     use_vlm_fallback=True,
                     mode="markdown",
+                    # 表格模式：跳过判别式后端（RapidOCR 会把网格/键值版式压成一段
+                    # 扁平文本、彻底丢失表格结构）；改用 VLM（DeepSeek-OCR）原生输出，
+                    # 其“键：值”行再由 kv_text_to_markdown_table 转成 Markdown 表格。
+                    skip_discriminative=self.as_table,
                 )
                 text = item.result
                 if self.as_table:
