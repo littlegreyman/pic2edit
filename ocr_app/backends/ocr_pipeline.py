@@ -78,7 +78,8 @@ def _looks_hallucinated(md):
 
 
 def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deepseek-ocr",
-        use_vlm_fallback=True, mode="markdown", skip_discriminative=False):
+        use_vlm_fallback=True, mode="markdown", skip_discriminative=False,
+        prompt=None, guard_hallucination=True):
     """填充每个 InputItem.result（Markdown）。返回 items。
 
     vlm_backend: 兜底用的 VLM 后端实例（如 LlamaCppBackend / OllamaBackend /
@@ -113,6 +114,10 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
         else:
             vlm = _vlm_backend(server_url, model)
 
+    # VLM 实际使用的提示词：优先用调用方传入的（来自 GUI 所选输出格式模板），
+    # 为空则回退到默认中文指令。这样“图表/公式/纯文本”等输出格式才能真正影响 VLM。
+    vlm_prompt = prompt if (prompt and prompt.strip()) else ZH_PROMPT
+
     for it in items:
         md = ""
         # 表格模式：优先表格识别
@@ -129,8 +134,8 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
         # VLM 兜底（仅当判别式未给出合格结果）
         if not _quality_ok(md) and vlm is not None:
             try:
-                vmd = vlm.ocr_image(it.image_path, ZH_PROMPT)
-                if vmd and not _looks_hallucinated(vmd):
+                vmd = vlm.ocr_image(it.image_path, vlm_prompt)
+                if vmd and (not guard_hallucination or not _looks_hallucinated(vmd)):
                     md = vmd
                 else:
                     # 兜底输出疑似幻觉：丢弃，保留判别式结果（哪怕为空），绝不把幻觉写进文档

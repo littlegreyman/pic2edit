@@ -682,6 +682,7 @@ class MainWindow(QMainWindow):
         self.worker = OcrWorker(
             self.backend, self.items, self.cfg.prompt(), indices,
             as_table=(self.cfg.prompt_template == "table"),
+            prompt_template=self.cfg.prompt_template,
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.item_done.connect(self._on_item_done)

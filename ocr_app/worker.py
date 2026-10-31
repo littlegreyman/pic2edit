@@ -17,7 +17,7 @@ class OcrWorker(QThread):
     error = Signal(str)
 
     def __init__(self, backend: OCRBackend, items: list, prompt: str, indices: list,
-                 as_table: bool = False):
+                 as_table: bool = False, prompt_template: str = "markdown"):
         super().__init__()
         self.backend = backend
         self.items = items
@@ -25,6 +25,12 @@ class OcrWorker(QThread):
         self.indices = indices
         # 表格模式：OCR 后把“键：值”文本转成 Markdown 表格
         self.as_table = as_table
+        self.prompt_template = prompt_template
+        # 输出格式真正生效：
+        # - 表格/图表 模式跳过判别式（RapidOCR 会压平/漏识别表格与图，交由 VLM 原生输出）；
+        # - 图表/公式模式下关闭英文 boilerplate 幻觉守卫（公式/化学符号等含拉丁字符属正常）。
+        self.skip_disc = as_table or (prompt_template == "figure")
+        self.guard = prompt_template != "figure"
 
     def run(self):
         total = len(self.indices)
@@ -43,10 +49,13 @@ class OcrWorker(QThread):
                     vlm_backend=self.backend,
                     use_vlm_fallback=True,
                     mode="markdown",
-                    # 表格模式：跳过判别式后端（RapidOCR 会把网格/键值版式压成一段
-                    # 扁平文本、彻底丢失表格结构）；改用 VLM（DeepSeek-OCR）原生输出，
-                    # 其“键：值”行再由 kv_text_to_markdown_table 转成 Markdown 表格。
-                    skip_discriminative=self.as_table,
+                    # 跳过判别式：表格/图表模式（RapidOCR 会压平或漏识别表格与图，
+                    # 交由 VLM 原生输出）；其余文本模式保留判别式优先（零幻觉）。
+                    skip_discriminative=self.skip_disc,
+                    # 把 GUI 所选输出格式的提示词真正传给 VLM（之前被硬编码 ZH_PROMPT 屏蔽）
+                    prompt=self.prompt,
+                    # 图表/公式模式关闭幻觉守卫（正常公式/符号含拉丁字符，不应被误判丢弃）
+                    guard_hallucination=self.guard,
                 )
                 text = item.result
                 if self.as_table:
