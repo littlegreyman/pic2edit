@@ -33,7 +33,7 @@ Everything runs on your machine — no cloud, no uploads.
 - **PySide6 双栏 GUI**：左侧待转换列表 / 图像预览，右侧可编辑 Markdown（编辑 / 预览双模式），一键导出 `.md / .docx / .txt`。
 - **四种输出格式**：Markdown（默认） / 纯文本 OCR / 图表·公式 / 表格（键值→表）。
 - **针对密集页面退化做了参数调优**：贪心解码 + 长程重复惩罚，稳定不崩、不截断（详见[关键技术要点](#关键技术要点)）。
-- **跨平台**：Windows / Linux / macOS（启动与下载脚本均提供 `.bat` 与 `.sh`）。
+- **跨平台**：Windows / Linux / macOS（启动与下载脚本均提供 `.bat` 与 `.sh`，另有跨平台 `launch_gui.py` 一键启动 GUI）。
 
 ---
 
@@ -44,6 +44,7 @@ pic2edit/
 ├── LICENSE                 # MIT 许可证
 ├── VERSION                 # 版本说明
 ├── .gitignore
+├── launch_gui.py           # 跨平台一键启动 GUI（自动定位 ocr_app 与 venv）
 └── ocr_app/                # 应用主体
     ├── main.py             # 入口
     ├── gui.py              # PySide6 双栏主界面 + 输出格式下拉 + 运行状态面板
@@ -114,12 +115,30 @@ run_llamacpp_server.bat   :: 默认 http://localhost:8080
 ```
 看到 `listening on http://127.0.0.1:8080` 即就绪。
 
-### 5. 打开 GUI
+### 5. 打开 GUI（一键启动脚本，推荐）
+
+仓库根目录提供**跨平台一键启动脚本** `launch_gui.py`，它会自动定位 `ocr_app`、按系统选用对应 venv 的解释器并启动 GUI；GUI 启动后会**按需自动拉起本地 OCR 引擎**，无需手动执行第 4 步的服务脚本。
+
+```bash
+python launch_gui.py            # Windows（.py 已关联 Python 时可直接双击）
+python3 launch_gui.py           # Linux / macOS
+```
+
+> 仅想检查环境是否就绪（不启动 GUI）：
+> ```bash
+> python launch_gui.py --dry-run
+> ```
+
+`launch_gui.py` 的定位优先级：环境变量 `PIC2EDIT_OCR_APP` / `PIC2EDIT_ROOT` > 从脚本位置向上查找 > 常见用户目录（`~/Documents/pic2edit`、`~/文档/pic2edit`、`~/pic2edit`、`~/projects/pic2edit`）。若项目不在这些默认位置，设置上述环境变量最稳妥。
+
+手动启动（等价，但需自己切到 `ocr_app` 并指定 venv python）：
 
 ```bat
+cd ocr_app
 .venv\Scripts\python.exe main.py   :: Windows
 ```
 ```bash
+cd ocr_app
 ./.venv/bin/python main.py         :: Linux / macOS
 ```
 
