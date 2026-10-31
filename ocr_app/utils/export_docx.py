@@ -9,6 +9,7 @@ Markdown -> docx 转换器覆盖常见元素：
 """
 import os
 import re
+from typing import List
 
 from docx import Document
 from docx.shared import Pt
@@ -34,6 +35,25 @@ def _add_runs(paragraph, line: str):
 
 def md_to_docx(text: str, out_path: str):
     doc = Document()
+    _populate_doc(doc, text)
+    doc.save(out_path)
+
+
+def md_pages_to_docx(page_texts: List[str], out_path: str, page_break: bool = True):
+    """把多页 Markdown 文本装配成一个 Word 文档，页与页之间插入真实分页符。
+
+    page_texts: 各页的 Markdown 文本列表（顺序即页序）。
+    第 1 页之前不插分页；其余页之前若 page_break=True 则 add_page_break()。
+    """
+    doc = Document()
+    for i, text in enumerate(page_texts):
+        if i > 0 and page_break:
+            doc.add_page_break()
+        _populate_doc(doc, text or "")
+    doc.save(out_path)
+
+
+def _populate_doc(doc, text: str):
     lines = text.splitlines()
     i = 0
     while i < len(lines):
@@ -96,5 +116,3 @@ def md_to_docx(text: str, out_path: str):
         p = doc.add_paragraph()
         _add_runs(p, line)
         i += 1
-
-    doc.save(out_path)

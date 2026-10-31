@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, Signal, QObject, QThread
 from PySide6.QtGui import QPixmap, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QListWidget, QListWidgetItem, QLabel, QTextEdit, QTextBrowser, QTabWidget,
+    QTreeWidget, QTreeWidgetItem, QLabel, QTextEdit, QTextBrowser, QTabWidget,
     QToolBar, QFileDialog, QMessageBox, QProgressBar, QPushButton, QDialog,
     QFormLayout, QComboBox, QLineEdit, QDialogButtonBox, QGroupBox, QPlainTextEdit,
     QProgressDialog,
@@ -19,8 +19,9 @@ from config import Config, RESOLUTION_MODES, PROMPT_LABELS
 from backends import OllamaBackend, TransformersBackend, LlamaCppBackend
 from backends.server_launcher import ServerStarter
 from worker import OcrWorker
-from utils.input_prep import prepare_input, InputItem
-from utils.export_docx import md_to_docx, save_text
+from utils.input_prep import prepare_input, InputItem, InputDocument
+from utils.export_docx import md_to_docx, save_text, md_pages_to_docx
+from utils.assemble import assemble_document
 from utils.logging_setup import get_logger, log_env_on_error
 from utils.app_home import resource_path
 
@@ -195,6 +196,7 @@ class MainWindow(QMainWindow):
         self.cfg = Config.load()
         self.items: list = []           # 扁平图像项（供 OcrWorker / 导出使用）
         self.documents: list = []       # 文档分组（InputDocument），供树形展示/整文档导出（P0 起）
+        self.page_tree_items: list = [] # 与 self.items 平行：每个图像项的树子节点（更新状态用）
         self.current = -1
         self.worker = None
         self.work_dir = tempfile.mkdtemp(prefix="pic2edit_")
@@ -219,6 +221,7 @@ class MainWindow(QMainWindow):
             ("转换选中", self.convert_selected),
             ("转换全部", self.convert_all),
             ("导出", self.export_current),
+            ("导出整文档", self.export_document),
             ("下载模型", self.open_download),
             ("设置", self.open_settings),
         ]:
@@ -237,12 +240,16 @@ class MainWindow(QMainWindow):
 
         split = QSplitter(Qt.Orientation.Horizontal)
 
-        # 左：列表 + 预览
+        # 左：树形文档列表（顶层=源文件，子项=页）+ 预览
         left = QWidget()
         lv = QVBoxLayout(left)
-        self.list_widget = QListWidget()
-        self.list_widget.currentRowChanged.connect(self.on_select)
-        lv.addWidget(self.list_widget, 1)
+        self.tree_widget = QTreeWidget()
+        self.tree_widget.setHeaderLabel("待转换文档（源文件 / 页面）")
+        self.tree_widget.setSelectionMode(
+            QTreeWidget.SelectionMode.ExtendedSelection
+        )
+        self.tree_widget.currentItemChanged.connect(self.on_select)
+        lv.addWidget(self.tree_widget, 1)
         self.preview = QLabel("待转换文件预览")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumHeight(240)
@@ -344,6 +351,23 @@ class MainWindow(QMainWindow):
         ]
         self._add_paths(sorted(files))
 
+    def _add_document(self, doc: InputDocument):
+        """把一个 InputDocument（源文件）挂到树：顶层项=文档，子项=各页。"""
+        self.documents.append(doc)
+        top = QTreeWidgetItem(self.tree_widget)
+        label = doc.name + (f"  （{len(doc.pages)} 页）" if doc.is_multi else "")
+        top.setText(0, label)
+        top.setData(0, Qt.UserRole, doc)  # 顶层存 InputDocument
+        # 多页文档默认展开，方便直接看到页；单页也展开（只有一个子项）
+        top.setExpanded(True)
+        for it in doc.pages:
+            self.items.append(it)
+            child = QTreeWidgetItem(top)
+            child.setText(0, it.name)
+            child.setData(0, Qt.UserRole, it)                 # 子项存 InputItem
+            child.setData(0, Qt.UserRole + 1, len(self.items) - 1)  # 子项存扁平索引
+            self.page_tree_items.append(child)
+
     def _add_paths(self, paths):
         added = 0
         for p in paths:
@@ -355,22 +379,31 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "导入失败", f"{p}\n{e}")
                 continue
             for doc in new_docs:
-                self.documents.append(doc)
-                for it in doc.pages:
-                    self.items.append(it)
-                    QListWidgetItem(it.name, self.list_widget)
-                    added += 1
-        self.statusBar().showMessage(f"已添加 {added} 个图像项，共 {len(self.items)} 个")
-        _logger.info("added %d items; total=%d", added, len(self.items))
+                before = len(self.items)
+                self._add_document(doc)
+                added += len(self.items) - before
+        self.statusBar().showMessage(f"已添加 {added} 个页面，共 {len(self.items)} 个")
+        _logger.info("added %d pages; total=%d", added, len(self.items))
         if self.current < 0 and self.items:
-            self.list_widget.setCurrentRow(0)
+            self.tree_widget.setCurrentItem(self.tree_widget.topLevelItem(0))
 
     # ---------- 选择/预览 ----------
-    def on_select(self, row):
-        if row < 0 or row >= len(self.items):
+    def on_select(self, current, previous):
+        if current is None:
             return
-        self.current = row
-        it = self.items[row]
+        obj = current.data(0, Qt.UserRole)
+        if isinstance(obj, InputDocument):
+            # 顶层（文档）被选中：预览其第一页
+            if obj.pages:
+                page = obj.pages[0]
+                self._show_page(page, self.items.index(page))
+        else:
+            # 子项（页）被选中
+            idx = current.data(0, Qt.UserRole + 1)
+            self._show_page(obj, idx)
+
+    def _show_page(self, it: InputItem, idx: int):
+        self.current = idx
         pix = QPixmap(it.image_path)
         if not pix.isNull():
             self.preview.setPixmap(
@@ -399,13 +432,82 @@ class MainWindow(QMainWindow):
         sb = self.status_log.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    # ---------- 选择收集（树形 -> 扁平索引）----------
+    def _gather_selection(self):
+        """收集当前树选择。
+
+        返回 (top_docs, child_pages)：
+        - top_docs: 被选中的“文档级（顶层）”InputDocument 列表；
+        - child_pages: 被选中的“页级（子项）”列表，元素为 (doc, item, flat_index)。
+        """
+        top_docs = []
+        child_pages = []
+        for tw in self.tree_widget.selectedItems():
+            obj = tw.data(0, Qt.UserRole)
+            if isinstance(obj, InputDocument):
+                top_docs.append(obj)
+            else:
+                doc = tw.parent().data(0, Qt.UserRole)
+                idx = tw.data(0, Qt.UserRole + 1)
+                child_pages.append((doc, obj, idx))
+        return top_docs, child_pages
+
+    def _doc_flat_indices(self, doc: InputDocument):
+        """返回该文档所有页的 (item, flat_index) 列表（保持页序）。"""
+        return [(it, self.items.index(it)) for it in doc.pages]
+
+    def _build_units(self, top_docs, child_pages):
+        """把选择规约为“转换单元”列表，每个单元 = (doc, [flat_index,...])。
+
+        规则：
+        - 选中顶层文档 -> 转换该文档全部页（忽略二级选择）；
+        - 仅选中二级页 -> 按文档分组，把同文档所选页作为一单元（多页则合并导出）；
+        - 跨源文档多选二级页 -> 返回 None（不允许）。
+        """
+        units = []
+        covered = set()
+        for doc in top_docs:
+            idxs = [i for _, i in self._doc_flat_indices(doc)]
+            units.append((doc, idxs))
+            covered.add(id(doc))
+        by_doc = {}
+        for doc, it, idx in child_pages:
+            if id(doc) in covered:
+                continue  # 该文档已按整文档处理
+            by_doc.setdefault(id(doc), (doc, []))[1].append((it, idx))
+        if len(by_doc) > 1:
+            return None  # 跨源多选，禁止
+        for _did, (doc, lst) in by_doc.items():
+            order = {it: idx for it, idx in lst}
+            idxs = [order[it] for it in doc.pages if it in order]
+            units.append((doc, idxs))
+        return units
+
     # ---------- 转换 ----------
     def convert_selected(self):
-        rows = [i for i in range(self.list_widget.count())
-                if self.list_widget.item(i).isSelected()]
-        if not rows:
-            rows = [self.current] if self.current >= 0 else []
-        self._run(rows)
+        top_docs, child_pages = self._gather_selection()
+        if not top_docs and not child_pages:
+            # 未显式多选：退化为当前聚焦页
+            if self.current >= 0:
+                self._run([self.current])
+            else:
+                QMessageBox.information(self, "提示", "请先选择要转换的文件")
+            return
+        units = self._build_units(top_docs, child_pages)
+        if units is None:
+            QMessageBox.warning(
+                self, "跨源多选",
+                "多页选择仅允许在同一个源文档内，不允许跨文档多选页面。\n"
+                "请只选择同一个文档的页面，或选择文档顶层以转换整篇。"
+            )
+            return
+        indices = []
+        for _doc, idxs in units:
+            indices.extend(idxs)
+        if not indices:
+            QMessageBox.information(self, "提示", "所选内容没有可转换的页面")
+            return
+        self._run(indices)
 
     def convert_all(self):
         self._run(list(range(len(self.items))))
@@ -509,10 +611,10 @@ class MainWindow(QMainWindow):
             self.editor.setPlainText(text)
             self.editor.blockSignals(False)
             self._render_preview(text)
-        # 更新列表状态显示
-        item = self.list_widget.item(idx)
-        if item:
-            item.setText(f"{self.items[idx].name}  [{self.items[idx].status}]")
+        # 更新树状态显示
+        tw = self.page_tree_items[idx] if idx < len(self.page_tree_items) else None
+        if tw is not None:
+            tw.setText(0, f"{self.items[idx].name}  [{self.items[idx].status}]")
 
     def _on_finished(self):
         self.progress.setVisible(False)
@@ -550,6 +652,74 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.statusBar().showMessage(f"导出失败：{e}")
             _logger.exception("export failed")
+            QMessageBox.critical(self, "导出失败", str(e))
+
+    def export_document(self):
+        """导出“整文档”：把所选文档的若干页（或全部页）装配成一个文件。
+
+        - 选中顶层文档 -> 该文档全部页合并为一个文件（忽略二级选择）；
+        - 仅选中同文档的若干页 -> 这些页合并为一个文件；
+        - 跨源多选 -> 拒绝。
+        导出格式：docx 会在每页之间插入真实分页符；md/txt 用分隔线标记页码。
+        """
+        top_docs, child_pages = self._gather_selection()
+        if not top_docs and not child_pages:
+            # 未显式多选：以当前聚焦项所在文档为整文档
+            cur = self.tree_widget.currentItem()
+            if cur is None:
+                QMessageBox.information(self, "提示", "请先选择要导出的文档或页面")
+                return
+            obj = cur.data(0, Qt.UserRole)
+            doc = obj if isinstance(obj, InputDocument) else cur.parent().data(0, Qt.UserRole)
+            units = [(doc, [i for _, i in self._doc_flat_indices(doc)])]
+        else:
+            units = self._build_units(top_docs, child_pages)
+            if units is None:
+                QMessageBox.warning(
+                    self, "跨源多选",
+                    "多页选择仅允许在同一个源文档内，不允许跨文档多选页面。\n"
+                    "请只选择同一个文档的页面，或选择文档顶层以导出整篇。"
+                )
+                return
+            if not units:
+                QMessageBox.information(self, "提示", "请先选择要导出的文档或页面")
+                return
+
+        # 整文档导出聚焦“当前所选文档”，多文档选择时仅导出第一个并提示
+        doc, idxs = units[0]
+        if len(units) > 1:
+            QMessageBox.information(
+                self, "提示",
+                f"检测到选中了 {len(units)} 个文档，本次仅导出第一个：{doc.name}\n"
+                "如需分别导出，请逐个文档选择后导出。"
+            )
+        pages = [self.items[i] for i in idxs]
+        texts = [it.result for it in pages]
+        if not any(t.strip() for t in texts):
+            QMessageBox.information(self, "提示", "该文档尚未转换或结果为空")
+            return
+        out_dir = self.cfg.output_dir or os.path.dirname(doc.source_path)
+        os.makedirs(out_dir, exist_ok=True)
+        base = os.path.splitext(os.path.basename(doc.source_path))[0]
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出整文档", os.path.join(out_dir, base + "_整文档"),
+            "Word 文档 (*.docx);;Markdown (*.md);;文本 (*.txt)"
+        )
+        if not path:
+            self.statusBar().showMessage("已取消导出")
+            return
+        self.statusBar().showMessage(f"正在导出整文档：{os.path.basename(path)} …")
+        try:
+            if path.lower().endswith(".docx"):
+                md_pages_to_docx(texts, path)   # 每页之间插入真实分页符
+            else:
+                save_text(assemble_document(texts), path)
+            self.statusBar().showMessage(f"导出成功：{path}")
+            _logger.info("exported document: %s (%d pages)", path, len(pages))
+            QMessageBox.information(self, "导出成功", f"已保存整文档到：{path}")
+        except Exception as e:
+            self.statusBar().showMessage(f"导出失败：{e}")
+            _logger.exception("export document failed")
             QMessageBox.critical(self, "导出失败", str(e))
 
     # ---------- 模型/引擎下载 ----------
