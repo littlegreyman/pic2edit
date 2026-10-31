@@ -78,6 +78,15 @@ def main():
     units = w._build_units(top_docs, child_pages)
     assert units == [(docA, [0, 1, 2]), (docB, [3])], units
 
+    # --- 同文档：顶层 docA + docA 自己的子页 -> 忽略子页，只整篇 docA ---
+    w.tree_widget.clearSelection()
+    topA.setSelected(True)
+    c0.setSelected(True)
+    c1.setSelected(True)
+    top_docs, child_pages = w._gather_selection()
+    units = w._build_units(top_docs, child_pages)
+    assert units == [(docA, [0, 1, 2])], units
+
     print("ALL PASS: test_gui_tree")
 
 
