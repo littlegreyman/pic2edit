@@ -19,10 +19,18 @@ agent_created: true
    - 输出格式 `--format`：Word / docx → `docx`；纯文本 / txt → `txt`；Markdown / md（默认）→ `md`。
    - 识别模式 `--mode`：表格 / 键值表 → `table`；图表 / 公式 → `figure`；纯文本 OCR → `ocr`；默认 → `markdown`。
 3. 用项目虚拟环境运行 helper（`<skill>/scripts/pic2edit_convert.py` 相对本技能目录）：
-   ```
-   <项目根>/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py <附件路径> --format <fmt> --mode <mode>
-   （注意：已装好全部依赖的虚拟环境在项目根目录 .venv，不是 ocr_app/.venv；ocr_app/.venv 是空环境，用它跑会报 ModuleNotFoundError）
-   ```
+   - 依赖 venv 在 **`ocr_app/.venv`**（主环境，含 requests / Pillow / pypdfium2 / python-docx / PySide6）。判别式 RapidOCR 由 helper 经**子进程**调用独立的 `ocr_app/.venv_ocr`，无需手动切 venv。
+   - 选取 venv 里的 python（**跨平台**）：
+     - Windows：`ocr_app\.venv\Scripts\python.exe`
+     - Linux / macOS：`ocr_app/.venv/bin/python3`
+   - 示例（`<skill>` = 技能目录，`<附件路径>` = 上传文件绝对路径）：
+     ```bash
+     # Windows
+     ocr_app\.venv\Scripts\python.exe <skill>/scripts/pic2edit_convert.py <附件路径> --format <fmt> --mode <mode>
+     # Linux / macOS
+     ocr_app/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py <附件路径> --format <fmt> --mode <mode>
+     ```
+   - helper 会自动定位 `ocr_app`：**优先读环境变量 `PIC2EDIT_OCR_APP` / `PIC2EDIT_ROOT`**；未设置时按常见用户目录（`~/Documents/pic2edit`、`~/文档/pic2edit`、`~/projects/pic2edit` 等）兜底，无需手动 `cd`。若你的项目不在这些位置，设置上述环境变量最稳妥。
    - 容器内无 GPU 自测时追加 `--gpu-layers 0`（CPU 模式）；用户原生桌面**不加**（自动用 GPU）。
    - 引擎未启动会被 helper 自动拉起（首次约 1–3 分钟加载进显存）；已启动则复用，不重复拉起。
 4. helper 把最终文件的**绝对路径**打印到 stdout（唯一 stdout 输出）。用 `present_files` 把该文件推给用户预览 / 下载。

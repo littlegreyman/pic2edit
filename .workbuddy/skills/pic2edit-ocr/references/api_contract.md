@@ -70,7 +70,9 @@
 
 ## 7. 环境约束
 
-- 必须用 `<项目根>/.venv/bin/python3` 运行（含 requests / Pillow / pypdfium2 / python-docx）。注意已装依赖的虚拟环境在项目根目录 `.venv`，不是 `ocr_app/.venv`（`ocr_app/.venv` 为空环境，用之会报 ModuleNotFoundError）。
+- 依赖 venv 在 **`ocr_app/.venv`**（主环境，含 requests / Pillow / pypdfium2 / python-docx / PySide6）。判别式 RapidOCR 由 helper 经子进程调用 `ocr_app/.venv_ocr`，无需手动切 venv。
+- 选取 venv 里的 python（跨平台）：Windows 用 `ocr_app\.venv\Scripts\python.exe`，Linux / macOS 用 `ocr_app/.venv/bin/python3`。
+- helper 自动定位 `ocr_app`：优先 `PIC2EDIT_OCR_APP` / `PIC2EDIT_ROOT` 环境变量，否则按常见用户目录（`~/Documents/pic2edit`、`~/文档/pic2edit`、`~/projects/pic2edit` 等）兜底。
 - 首次启动引擎约 1–3 分钟加载模型进显存；6GB 显存跑 Q4_K_M（≈2GB）可行。
 - 引擎默认常驻；`--stop-server` 可在本次拉起后退出。
 - 容器无 GPU：传 `--gpu-layers 0` 走 CPU（需足够内存加载模型）。

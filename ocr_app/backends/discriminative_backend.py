@@ -97,8 +97,15 @@ def assemble_markdown(lines, H=0):
 
 
 def _venv_python():
-    cand = os.path.join(OCR_VENV, "bin", "python")
-    return cand if os.path.exists(cand) else None
+    # 跨平台选择 venv 解释器：Windows 用 Scripts\python.exe，POSIX 用 bin/python3。
+    if os.name == "nt" or sys.platform.startswith("win"):
+        cand = os.path.join(OCR_VENV, "Scripts", "python.exe")
+        return cand if os.path.exists(cand) else None
+    for name in ("python3", "python"):
+        cand = os.path.join(OCR_VENV, "bin", name)
+        if os.path.exists(cand):
+            return cand
+    return None
 
 
 class DiscriminativeBackend:

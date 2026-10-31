@@ -34,11 +34,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 def _find_ocr_app():
     """定位 pic2edit 的 ocr_app 目录（含 run_llamacpp_server.py）。
 
-    解析优先级：
+    解析优先级（跨 Windows / Linux / macOS）：
       1) 环境变量 PIC2EDIT_OCR_APP / PIC2EDIT_ROOT（显式指路，最可靠）
-      2) 从本脚本位置向上查找（适用于技能随项目放置的情况）
-      3) 本机已知的固定项目路径兜底（适用于技能装为「用户级」、
-         脚本位于 ~/.workbuddy/skills/... 时，向上找不到仓库）
+      2) 从本脚本位置向上查找（技能随项目放置时命中）
+      3) 常见用户目录候选（~ 展开后尝试多种相对布局，含中英文“文档”）
+      4) 兼容历史布局的相对推算
     """
     env = os.environ.get("PIC2EDIT_OCR_APP")
     if not env:
@@ -47,7 +47,8 @@ def _find_ocr_app():
             env = os.path.join(root, "ocr_app")
     if env and os.path.isfile(os.path.join(env, "run_llamacpp_server.py")):
         return env
-    # 向上查找（技能随项目放在 <repo>/.workbuddy/skills/... 时命中）
+
+    # 2) 向上查找（技能随项目放在 <repo>/.workbuddy/skills/... 时命中）
     cur = HERE
     for _ in range(6):
         if os.path.isfile(os.path.join(cur, "run_llamacpp_server.py")):
@@ -56,11 +57,32 @@ def _find_ocr_app():
         if parent == cur:
             break
         cur = parent
-    # 兜底：本机已知路径（技能装为「用户级」时也能定位）
-    fallback = "/home/michael/文档/pic2edit/pic2edit/ocr_app"
-    if os.path.isfile(os.path.join(fallback, "run_llamacpp_server.py")):
-        return fallback
-    # 最后退回旧的相对推算（兼容历史布局）
+
+    # 3) 常见用户目录候选（跨平台，含本地化“文档”目录）
+    home = os.path.expanduser("~")
+    xdg_docs = (os.environ.get("XDG_DOCUMENTS_DIR") or "").rstrip("/")
+    doc_dirs = [os.path.join(home, "Documents"),
+                os.path.join(home, "文档")]
+    if xdg_docs:
+        doc_dirs.append(xdg_docs)
+    rel_roots = [
+        "pic2edit/ocr_app",
+        "pic2edit/pic2edit/ocr_app",   # 嵌套 clone 形态
+        "projects/pic2edit/ocr_app",
+        "ocr_app",
+    ]
+    for doc in doc_dirs:
+        for rel in rel_roots:
+            cand = os.path.join(doc, rel)
+            if os.path.isfile(os.path.join(cand, "run_llamacpp_server.py")):
+                return cand
+    # 也允许项目直接放在 home 下
+    for rel in rel_roots:
+        cand = os.path.join(home, rel)
+        if os.path.isfile(os.path.join(cand, "run_llamacpp_server.py")):
+            return cand
+
+    # 4) 兼容历史布局的相对推算（技能装为用户级且无 env/已知路径时）
     return os.path.abspath(os.path.join(HERE, "..", "..", "..", "..", "ocr_app"))
 
 
@@ -138,10 +160,11 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server):
     # RapidOCR/onnxruntime 加载模型会被 OOM killer 连父进程一起 SIGKILL(137)，表现为
     # 无任何输出的“死机”。此时跳过判别式，直接走 VLM 兜底（依赖本机 :8080 的 llama-server）。
     # 也可用环境变量 PIC2EDIT_SKIP_DISCRIMINATIVE=1 强制跳过。
-    import resource as _rs
-
     def _vmem_limited_gb():
+        # `resource` 是 Unix 专属模块；Windows 上不可用，按「无虚拟内存限制」处理
+        # （即不自动跳过判别式，由后续逻辑按可用性决定）。
         try:
+            import resource as _rs
             soft, _ = _rs.getrlimit(_rs.RLIMIT_AS)
         except Exception:
             return 0
