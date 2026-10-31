@@ -366,7 +366,7 @@ class MainWindow(QMainWindow):
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.item_done.connect(self._on_item_done)
-        self.worker.finished.connect(self._on_finished)
+        self.worker.worker_finished.connect(self._on_finished)
         self.worker.error.connect(lambda e: (_logger.error("worker error: %s", e), QMessageBox.critical(self, "错误", e)))
         self.worker.start()
 
@@ -396,7 +396,7 @@ class MainWindow(QMainWindow):
             dlg.reject()
             self._show_backend_unavailable(msg)
 
-        starter.started.connect(on_started)
+        starter.server_started.connect(on_started)
         starter.failed.connect(on_failed)
         dlg.canceled.connect(starter.stop)  # 用户取消：终止正在启动的引擎
         starter.start()

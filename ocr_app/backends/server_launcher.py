@@ -19,7 +19,7 @@ OCR_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class ServerStarter(QThread):
     log = Signal(str)
-    started = Signal()
+    server_started = Signal()
     failed = Signal(str)
 
     def __init__(self, backend_name, url, cfg):
@@ -135,7 +135,7 @@ class ServerStarter(QThread):
             if self._done:
                 return
             self._done = True
-            self.started.emit()
+            self.server_started.emit()
             return
         if self._done:  # _probe 已因进程退出而 _fail
             return

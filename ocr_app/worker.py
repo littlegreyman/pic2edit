@@ -13,7 +13,7 @@ _logger = get_logger("worker")
 class OcrWorker(QThread):
     progress = Signal(int, int, str)   # 当前序号, 总数, 名称
     item_done = Signal(int, str)        # 序号, 文本
-    finished = Signal()
+    worker_finished = Signal()
     error = Signal(str)
 
     def __init__(self, backend: OCRBackend, items: list, prompt: str, indices: list,
@@ -64,4 +64,4 @@ class OcrWorker(QThread):
                 )
             self.item_done.emit(idx, item.result)
         _logger.info("OCR job finished")
-        self.finished.emit()
+        self.worker_finished.emit()
