@@ -1,6 +1,11 @@
-pic2edit 0.17 (alpha)
+pic2edit 0.18 (alpha)
 ========================
-本地离线图片转可编辑文档工具 —— alpha 0.17 里程碑。
+本地离线图片转可编辑文档工具 —— alpha 0.18 里程碑。
+
+alpha 0.18 相对 0.17 的变更：
+- 打包发布：新增 PyInstaller 冻结 + Inno Setup 安装包（packaging/），可安装到任意盘（含非系统盘），首次运行自动下载模型/引擎到安装目录（跟随所选盘符）。
+- 路径中立：新增 utils/app_home.py，冻结态下配置/日志/模型/引擎均定位到安装目录，不再写死 C:\Users；PyQt6 → PySide6 迁移并修复信号遮蔽导致的 GUI 冷启动崩溃。
+- 修复 Inno Setup 7 编译问题（[Languages] 段语言文件路径、移除无效 Flag）。
 
 alpha 0.16 相对 0.15 的变更：
 - 新增判别式 OCR 优先流水线（RapidOCR 子环境 .venv_ocr），对清晰印刷体零幻觉；

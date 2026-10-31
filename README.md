@@ -249,4 +249,4 @@ DeepSeek-OCR 在 llama.cpp 上的**原生模板会自动注入 media marker** �
 
 ## 📝 版本
 
-当前为 **alpha 0.17**（参见 Git tag `alpha-0.17`）。项目仍处于早期阶段，欢迎 Issue / PR。
+当前为 **alpha 0.18**（对应安装包版本 0.18.0，Git tag `alpha-0.18`）。项目仍处于早期阶段，欢迎 Issue / PR。
