@@ -20,7 +20,7 @@ from backends import OllamaBackend, TransformersBackend, LlamaCppBackend
 from backends.server_launcher import ServerStarter
 from worker import OcrWorker
 from utils.input_prep import prepare_input, InputItem, InputDocument
-from utils.export_docx import md_to_docx, save_text, md_pages_to_docx
+from utils.export_docx import save_text, md_pages_to_docx
 from utils.assemble import assemble_document
 from utils.logging_setup import get_logger, log_env_on_error
 from utils.app_home import resource_path
@@ -220,8 +220,7 @@ class MainWindow(QMainWindow):
             ("打开文件夹", self.open_folder),
             ("转换选中", self.convert_selected),
             ("转换全部", self.convert_all),
-            ("导出", self.export_current),
-            ("导出整文档", self.export_document),
+            ("导出", self.export_selected),
             ("下载模型", self.open_download),
             ("设置", self.open_settings),
         ]:
@@ -238,6 +237,19 @@ class MainWindow(QMainWindow):
         self.template_combo.currentIndexChanged.connect(self._on_template_changed)
         toolbar.addWidget(self.template_combo)
 
+        # 列表管理（仅文档级：一级节点）：删除 / 上移 / 下移 / 清空
+        toolbar.addWidget(QLabel("  |  列表："))
+        self.btn_delete = QPushButton("删除")
+        self.btn_delete.clicked.connect(self.delete_selected)
+        self.btn_up = QPushButton("上移")
+        self.btn_up.clicked.connect(lambda: self.move_selected(-1))
+        self.btn_down = QPushButton("下移")
+        self.btn_down.clicked.connect(lambda: self.move_selected(1))
+        self.btn_clear = QPushButton("清空")
+        self.btn_clear.clicked.connect(self.clear_all)
+        for b in (self.btn_delete, self.btn_up, self.btn_down, self.btn_clear):
+            toolbar.addWidget(b)
+
         split = QSplitter(Qt.Orientation.Horizontal)
 
         # 左：树形文档列表（顶层=源文件，子项=页）+ 预览
@@ -249,6 +261,8 @@ class MainWindow(QMainWindow):
             QTreeWidget.SelectionMode.ExtendedSelection
         )
         self.tree_widget.currentItemChanged.connect(self.on_select)
+        self.tree_widget.itemSelectionChanged.connect(self._update_list_buttons)
+        self._update_list_buttons()
         lv.addWidget(self.tree_widget, 1)
         self.preview = QLabel("待转换文件预览")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -386,6 +400,143 @@ class MainWindow(QMainWindow):
         _logger.info("added %d pages; total=%d", added, len(self.items))
         if self.current < 0 and self.items:
             self.tree_widget.setCurrentItem(self.tree_widget.topLevelItem(0))
+
+    # ---------- 列表管理（仅文档级）----------
+    def _reindex(self):
+        """以树为唯一事实源，重建扁平 self.items / self.page_tree_items，
+        并重写子项扁平索引 (UserRole+1)，同步 self.documents 顺序。
+
+        删除 / 移动 / 清空后调用，确保扁平索引与树一致。
+        """
+        self.items = []
+        self.page_tree_items = []
+        self.documents = []
+        for ti in range(self.tree_widget.topLevelItemCount()):
+            top = self.tree_widget.topLevelItem(ti)
+            doc = top.data(0, Qt.UserRole)
+            self.documents.append(doc)
+            for ci in range(top.childCount()):
+                child = top.child(ci)
+                it = child.data(0, Qt.UserRole)
+                child.setData(0, Qt.UserRole + 1, len(self.items))
+                self.items.append(it)
+                self.page_tree_items.append(child)
+
+    def _update_list_buttons(self):
+        """根据当前选择更新列表管理按钮可用状态。
+
+        规则：删除/移动仅在“纯文档级（一级）选择”时可用；选中任何二级页时禁用，
+        因为二级页不允许删除/移动（锁定决策）。
+        """
+        sel = self.tree_widget.selectedItems()
+        top_sel = [tw for tw in sel
+                   if isinstance(tw.data(0, Qt.UserRole), InputDocument)]
+        child_sel = [tw for tw in sel
+                    if not isinstance(tw.data(0, Qt.UserRole), InputDocument)]
+        doc_only = len(child_sel) == 0 and len(top_sel) >= 1
+        single_doc = len(top_sel) == 1 and len(child_sel) == 0
+        self.btn_delete.setEnabled(doc_only)
+        if single_doc:
+            idx = self.tree_widget.indexOfTopLevelItem(top_sel[0])
+            self.btn_up.setEnabled(idx > 0)
+            self.btn_down.setEnabled(idx < self.tree_widget.topLevelItemCount() - 1)
+        else:
+            self.btn_up.setEnabled(False)
+            self.btn_down.setEnabled(False)
+        self.btn_clear.setEnabled(self.tree_widget.topLevelItemCount() > 0)
+
+    def delete_selected(self):
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.information(self, "提示", "正在转换中，请等待当前任务完成。")
+            return
+        sel = self.tree_widget.selectedItems()
+        top_items = [tw for tw in sel
+                    if isinstance(tw.data(0, Qt.UserRole), InputDocument)]
+        child_sel = any(not isinstance(tw.data(0, Qt.UserRole), InputDocument)
+                       for tw in sel)
+        if not top_items:
+            QMessageBox.information(
+                self, "提示",
+                "删除仅针对一级文档节点；二级页面不允许删除，请选择文档顶层项。"
+            )
+            return
+        if child_sel:
+            QMessageBox.information(
+                self, "提示",
+                "所选包含二级页面，无法删除。请只选中要删除的文档顶层项。"
+            )
+            return
+        names = "、".join(t.text(0) for t in top_items)
+        ret = QMessageBox.question(
+            self, "确认删除",
+            f"将删除以下 {len(top_items)} 个文档（含其全部页面）：\n{names}\n此操作不可撤销。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        for t in top_items:
+            self.tree_widget.takeTopLevelItem(
+                self.tree_widget.indexOfTopLevelItem(t)
+            )
+        self._reindex()
+        if self.items:
+            self.tree_widget.setCurrentItem(self.tree_widget.topLevelItem(0))
+        else:
+            self.current = -1
+            self.editor.clear()
+            self.preview.setText("待转换文件预览")
+            self._render_preview("")
+        self._update_list_buttons()
+        self.statusBar().showMessage(f"已删除文档，剩余 {len(self.documents)} 个")
+
+    def move_selected(self, delta: int):
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.information(self, "提示", "正在转换中，请等待当前任务完成。")
+            return
+        sel = self.tree_widget.selectedItems()
+        top_items = [tw for tw in sel
+                    if isinstance(tw.data(0, Qt.UserRole), InputDocument)]
+        child_sel = any(not isinstance(tw.data(0, Qt.UserRole), InputDocument)
+                       for tw in sel)
+        if len(top_items) != 1 or child_sel:
+            QMessageBox.information(
+                self, "提示",
+                "上下移动仅针对单个一级文档节点（二级页面不可移动），"
+                "请只选中一个文档顶层项。"
+            )
+            return
+        t = top_items[0]
+        idx = self.tree_widget.indexOfTopLevelItem(t)
+        new = idx + delta
+        if new < 0 or new >= self.tree_widget.topLevelItemCount():
+            return
+        self.tree_widget.takeTopLevelItem(idx)
+        self.tree_widget.insertTopLevelItem(new, t)
+        self._reindex()
+        self.tree_widget.setCurrentItem(t)
+        self._update_list_buttons()
+
+    def clear_all(self):
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.information(self, "提示", "正在转换中，请等待当前任务完成。")
+            return
+        if self.tree_widget.topLevelItemCount() == 0:
+            return
+        ret = QMessageBox.question(
+            self, "确认清空",
+            "将移除所有文档与页面，此操作不可撤销。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        self.tree_widget.clear()
+        self._reindex()
+        self.current = -1
+        self.editor.clear()
+        self.preview.setText("待转换文件预览")
+        self._render_preview("")
+        self._update_list_buttons()
+        self.statusBar().showMessage("已清空列表")
 
     # ---------- 选择/预览 ----------
     def on_select(self, current, previous):
@@ -621,57 +772,31 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"转换完成（共 {len(self.items)} 个图像项）")
         _logger.info("conversion finished; total items=%d", len(self.items))
 
-    # ---------- 导出 ----------
-    def export_current(self):
-        if self.current < 0:
-            QMessageBox.information(self, "提示", "请先选择要导出的文件")
-            return
-        it = self.items[self.current]
-        if not it.result.strip():
-            QMessageBox.information(self, "提示", "该文件尚未转换或结果为空")
-            return
-        out_dir = self.cfg.output_dir or os.path.dirname(it.source)
-        os.makedirs(out_dir, exist_ok=True)
-        base = os.path.splitext(os.path.basename(it.source))[0]
-        path, _ = QFileDialog.getSaveFileName(
-            self, "导出", os.path.join(out_dir, base),
-            "Word 文档 (*.docx);;Markdown (*.md);;文本 (*.txt)"
-        )
-        if not path:
-            self.statusBar().showMessage("已取消导出")
-            return
-        self.statusBar().showMessage(f"正在导出：{os.path.basename(path)} …")
-        try:
-            if path.lower().endswith(".docx"):
-                md_to_docx(it.result, path)
-            else:
-                save_text(it.result, path)
-            self.statusBar().showMessage(f"导出成功：{path}")
-            _logger.info("exported: %s", path)
-            QMessageBox.information(self, "导出成功", f"已保存到：{path}")
-        except Exception as e:
-            self.statusBar().showMessage(f"导出失败：{e}")
-            _logger.exception("export failed")
-            QMessageBox.critical(self, "导出失败", str(e))
+    # ---------- 导出（按选择，单一按钮）----------
+    def export_selected(self):
+        """导出（按当前树选择）：
 
-    def export_document(self):
-        """导出“整文档”：把所选文档的若干页（或全部页）装配成一个文件。
+        - 选中一级目录（顶层文档） -> 导出该文档全部页（装配成一个文件）；
+        - 选中二级页面（1 个或多个，需同属一个文档） -> 导出这些页组成的文档；
+        - 跨文档多选二级页 -> 拒绝。
+        格式：docx 在页间插入真实分页符；md/txt 用分隔线/页码标记。
 
-        - 选中顶层文档 -> 该文档全部页合并为一个文件（忽略二级选择）；
-        - 仅选中同文档的若干页 -> 这些页合并为一个文件；
-        - 跨源多选 -> 拒绝。
-        导出格式：docx 会在每页之间插入真实分页符；md/txt 用分隔线标记页码。
+        未显式多选时，以当前聚焦项为准：聚焦顶层文档=整文档，聚焦某页=该页。
         """
         top_docs, child_pages = self._gather_selection()
         if not top_docs and not child_pages:
-            # 未显式多选：以当前聚焦项所在文档为整文档
+            # 未显式多选：以当前聚焦项为准（顶层=整文档，子页=该页）
             cur = self.tree_widget.currentItem()
             if cur is None:
                 QMessageBox.information(self, "提示", "请先选择要导出的文档或页面")
                 return
             obj = cur.data(0, Qt.UserRole)
-            doc = obj if isinstance(obj, InputDocument) else cur.parent().data(0, Qt.UserRole)
-            units = [(doc, [i for _, i in self._doc_flat_indices(doc)])]
+            if isinstance(obj, InputDocument):
+                units = [(obj, [i for _, i in self._doc_flat_indices(obj)])]
+            else:
+                doc = cur.parent().data(0, Qt.UserRole)
+                idx = cur.data(0, Qt.UserRole + 1)
+                units = [(doc, [idx])]
         else:
             units = self._build_units(top_docs, child_pages)
             if units is None:
@@ -685,7 +810,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "提示", "请先选择要导出的文档或页面")
                 return
 
-        # 整文档导出聚焦“当前所选文档”，多文档选择时仅导出第一个并提示
+        # 多文档选择时仅导出第一个并提示（保持导出为单一文件）
         doc, idxs = units[0]
         if len(units) > 1:
             QMessageBox.information(
@@ -702,24 +827,24 @@ class MainWindow(QMainWindow):
         os.makedirs(out_dir, exist_ok=True)
         base = os.path.splitext(os.path.basename(doc.source_path))[0]
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出整文档", os.path.join(out_dir, base + "_整文档"),
+            self, "导出", os.path.join(out_dir, base),
             "Word 文档 (*.docx);;Markdown (*.md);;文本 (*.txt)"
         )
         if not path:
             self.statusBar().showMessage("已取消导出")
             return
-        self.statusBar().showMessage(f"正在导出整文档：{os.path.basename(path)} …")
+        self.statusBar().showMessage(f"正在导出：{os.path.basename(path)} …")
         try:
             if path.lower().endswith(".docx"):
                 md_pages_to_docx(texts, path)   # 每页之间插入真实分页符
             else:
                 save_text(assemble_document(texts), path)
             self.statusBar().showMessage(f"导出成功：{path}")
-            _logger.info("exported document: %s (%d pages)", path, len(pages))
-            QMessageBox.information(self, "导出成功", f"已保存整文档到：{path}")
+            _logger.info("exported: %s (%d pages)", path, len(pages))
+            QMessageBox.information(self, "导出成功", f"已保存到：{path}")
         except Exception as e:
             self.statusBar().showMessage(f"导出失败：{e}")
-            _logger.exception("export document failed")
+            _logger.exception("export failed")
             QMessageBox.critical(self, "导出失败", str(e))
 
     # ---------- 模型/引擎下载 ----------
