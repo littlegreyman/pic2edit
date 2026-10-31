@@ -71,8 +71,12 @@ Name: "chinese_simplified"; MessagesFile: "compiler:Languages\ChineseSimplified.
 Source: "..\dist\pic2edit\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; 第三方许可声明（PySide6/LGPL 要求随附，且说明可替换/源码可得）
-; 若项目根有 THIRD_PARTY_NOTICES 则一并打包；没有则跳过（Flags: skipifsourceless）
-Source: "..\THIRD_PARTY_NOTICES"; DestDir: "{app}"; Flags: ignoreversion skipifsourceless
+; 用预处理器判断文件是否存在：存在则打包，缺失则跳过（避免缺文件导致编译失败）
+; （注：skipifsourceless 不是 [Files] 的有效 Flag，故改用 #if FileExists）
+#define ThirdPartyNotices "..\THIRD_PARTY_NOTICES"
+#if FileExists(ThirdPartyNotices)
+Source: "{#ThirdPartyNotices}"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
