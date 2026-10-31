@@ -127,6 +127,8 @@ launch_gui.bat
 
 > 说明：若你的 Windows 没有在 PATH 上安装系统 Python（PowerShell 里输入 `python` 会跳转到微软商店占位桩），请务必用 `launch_gui.bat`——它绕开了系统 `python`，直接调用项目内的 venv 解释器。
 
+> **带图标的启动入口**：`launch_gui.bat` 本身在 Windows 资源管理器里只能显示脚本默认图标（`.bat` 无法绑定自定义图标）。仓库根目录的 `pic2edit.lnk` 是一个已绑定 `pic2edit-logo.ico`（pic2edit logo）图标的快捷方式，双击它即可启动 GUI，效果等同 `launch_gui.bat`。该 `.lnk` 含本机绝对路径，属本机便捷入口，不纳入版本管理。
+
 **Linux / macOS**：在仓库根目录运行（需先 `chmod +x launch_gui.sh` 一次，或始终用 `sh` 调用）：
 
 ```bash
