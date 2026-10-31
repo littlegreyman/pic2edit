@@ -60,7 +60,8 @@ LicenseFile=..\LICENSE
 InfoBeforeFile=
 
 [Languages]
-Name: "chinese_simplified"; MessagesFile: "compiler:ChineseSimplified.isl"
+; Inno Setup 7 把语言文件放在 Languages\ 子目录下（6 在根目录），故加 Languages\ 前缀
+Name: "chinese_simplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Files]
 ; 整个冻结目录（dist/pic2edit/*）安装到 {app}
