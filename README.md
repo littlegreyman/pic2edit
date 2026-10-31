@@ -105,6 +105,8 @@ download_models.bat   :: Windows
 1. 从 GitHub Release（`ggml-org/llama.cpp`，tag `b11853`）下载官方预编译的 `llama-server`（Windows/Linux 用 CUDA 版，macOS 用 Metal 版）到 `ocr_app/bin/`；
 2. 用 `huggingface_hub` 把 DeepSeek-OCR 的 GGUF（Q4_K_M）+ mmproj 拉到 `ocr_app/models/`（`hf.co` 不通时自动切到 `hf-mirror.com`）。
 
+> 注：首次实际下载约 **3.2 GB**——Q4_K_M 主模型约 1.95 GB，外加两个 mmproj 投影文件约 1.3 GB（下载器当前会一并拉取两个 mmproj 变体，运行时只需其一）。更完整的磁盘空间与系统要求见 [`INSTALL.zh-CN.md`](INSTALL.zh-CN.md)。
+
 > 若网络受限，脚本会给出手动下载链接；你也可以手动把对应 GGUF 与 mmproj 放进 `ocr_app/models/`。
 
 ### 4. 启动本地 OCR 服务

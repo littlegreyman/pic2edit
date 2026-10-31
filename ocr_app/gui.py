@@ -68,7 +68,8 @@ class _StreamToSignal:
 class DownloadThread(QThread):
     """后台下载官方 llama.cpp 引擎 + DeepSeek-OCR GGUF 到安装根目录（data_root）。"""
     log_line = Signal(str)
-    finished = Signal(bool, str)
+    # 注意：绝不能命名为 finished/started/terminated，否则会遮蔽 QThread 内置同名信号
+    download_finished = Signal(bool, str)
 
     def run(self):
         import sys
@@ -82,7 +83,7 @@ class DownloadThread(QThread):
             ok = False
         finally:
             sys.stdout, sys.stderr = old_out, old_err
-        self.finished.emit(bool(ok), "" if ok else "下载失败，详见上方日志")
+        self.download_finished.emit(bool(ok), "" if ok else "下载失败，详见上方日志")
 
 
 class DownloadDialog(QDialog):
@@ -573,7 +574,7 @@ class MainWindow(QMainWindow):
         thread = DownloadThread()
         self._dl_thread = thread  # 防止被 GC
         thread.log_line.connect(dlg.append)
-        thread.finished.connect(lambda ok, msg: self._on_download_finished(ok, msg, dlg))
+        thread.download_finished.connect(lambda ok, msg: self._on_download_finished(ok, msg, dlg))
         dlg.show()
         thread.start()
 
@@ -612,6 +613,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         # GUI 自动拉起的本地 OCR 引擎（llama-server / transformers 服务）是 GUI 的子进程，
         # 关闭窗口时一并终止，避免残留进程占用显存。
+        # 注意：_server_proc 仅在自动启动“成功”后才被赋值；若启动“失败/仍在进行中”时关闭窗口，
+        # 进程由 ServerStarter._proc 持有，故这里两者都要清理，否则会留下孤儿进程持续占显存。
         proc = getattr(self, "_server_proc", None)
         if proc is not None:
             try:
@@ -621,6 +624,12 @@ class MainWindow(QMainWindow):
                         proc.wait(timeout=5)
                     except Exception:
                         proc.kill()
+            except Exception:
+                pass
+        starter = getattr(self, "_server_starter", None)
+        if starter is not None:
+            try:
+                starter.stop()  # 终止 starter 内部持有的子进程（覆盖启动失败/进行中的情况）
             except Exception:
                 pass
         import shutil
