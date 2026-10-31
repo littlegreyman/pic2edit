@@ -43,14 +43,18 @@ class ServerStarter(QThread):
             pass
 
     def run(self):
-        if self.backend_name == "llama_cpp":
-            self._start_llamacpp()
-        elif self.backend_name == "transformers":
-            self._start_transformers()
-        else:
-            self._fail(
-                "Ollama 暂不支持自动启动，请手动启动 Ollama 并执行 `ollama pull deepseek-ocr`。"
-            )
+        try:
+            if self.backend_name == "llama_cpp":
+                self._start_llamacpp()
+            elif self.backend_name == "transformers":
+                self._start_transformers()
+            else:
+                self._fail(
+                    "Ollama 暂不支持自动启动，请手动启动 Ollama 并执行 `ollama pull deepseek-ocr`。"
+                )
+        except Exception:
+            import traceback as _tb
+            self._fail("自动启动引擎异常：\n" + _tb.format_exc())
 
     def _fail(self, msg):
         if self._done:
@@ -88,8 +92,8 @@ class ServerStarter(QThread):
             self._fail("未找到 models/*.gguf 模型。请先运行 download_models.bat 下载模型。")
             return
         cmd = rls.build_command(exe, model, mmproj)
-        self.log("[launch] " + " ".join(cmd))
-        self.log("[wait] 正在把模型加载进显存（首次约 1–3 分钟），请稍候…")
+        self.log.emit("[launch] " + " ".join(cmd))
+        self.log.emit("[wait] 正在把模型加载进显存（首次约 1–3 分钟），请稍候…")
         try:
             self._proc = subprocess.Popen(cmd, **self._popen_kwargs())
         except Exception as e:
@@ -115,8 +119,8 @@ class ServerStarter(QThread):
             self._fail("未找到 .venv_tf 解释器，请先运行 download_models_tf.bat 建好环境。")
             return
         cmd = [venv_tf, script]
-        self.log("[launch] " + " ".join(cmd))
-        self.log("[wait] 正在加载 transformers 模型（首次约 1–3 分钟），请稍候…")
+        self.log.emit("[launch] " + " ".join(cmd))
+        self.log.emit("[wait] 正在加载 transformers 模型（首次约 1–3 分钟），请稍候…")
         try:
             self._proc = subprocess.Popen(cmd, **self._popen_kwargs())
         except Exception as e:
@@ -145,7 +149,7 @@ class ServerStarter(QThread):
     def _stream(self):
         try:
             for line in self._proc.stdout:
-                self.log(line.rstrip("\n"))
+                self.log.emit(line.rstrip("\n"))
         except Exception:
             pass
 
