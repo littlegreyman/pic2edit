@@ -50,7 +50,6 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 LanguageDetectionMethod=uilanguage
-Languages=chinese_simplified
 
 ; 单实例 + 重启后清理
 CloseApplications=yes
