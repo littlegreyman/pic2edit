@@ -39,3 +39,10 @@ installer_out/
 
 # 打包时预热的 RapidOCR onnx 模型（若落地到 ocr_app/rapidocr_models，随包收集，不入库）
 ocr_app/rapidocr_models/
+
+# ===== pic2edit-ocr skill 运行产物（不入库）=====
+# logs/ 内含原始 OCR 全文与本地绝对路径（如 C:/Users/.../Downloads/...），属内部凭证文本，
+# 绝不可随仓库外发；按设计默认保留 10 天，由 skill 自行轮转。
+.workbuddy/skills/pic2edit-ocr/logs/
+# 字节码缓存
+.workbuddy/skills/pic2edit-ocr/**/__pycache__/
