@@ -72,7 +72,7 @@
 
 ## 7. 环境约束
 
-- 依赖 venv 在 **`ocr_app/.venv`**（主环境，含 requests / Pillow / pypdfium2 / python-docx / PySide6）。判别式 RapidOCR 由 helper 经子进程调用 `ocr_app/.venv_ocr`，无需手动切 venv。
+- 依赖 venv 在 **`ocr_app/.venv`**（主环境，含 requests / Pillow / pypdfium2 / python-docx / PySide6 / rapidocr>=3.10）。判别式 RapidOCR 由 helper 经子进程调用 `ocr_app/.venv`（rapidocr 已支持 Python 3.14，无需独立 `.venv_ocr`），无需手动切 venv。
 - 选取 venv 里的 python（跨平台）：Windows 用 `ocr_app\.venv\Scripts\python.exe`，Linux / macOS 用 `ocr_app/.venv/bin/python3`。
   ```bash
   # Windows

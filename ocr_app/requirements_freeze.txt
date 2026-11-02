@@ -1,0 +1,7 @@
+# 冻结态（PyInstaller 打包）依赖：在主依赖之上追加 RapidOCR 进程内判别式 OCR 引擎。
+#
+# 新 rapidocr(>=3.10) 官方支持 Python 3.14，可直接在主 venv 中打包（无需 <=3.12）。
+# 开发态与运行态均已随主 requirements.txt 安装；本文件主要用于显式冻结版本。
+-r requirements.txt
+rapidocr>=3.10.0
+onnxruntime>=1.31

@@ -24,7 +24,7 @@ class TableRecognizer:
 
     def recognize(self, image_path):
         if self._mod is None:
-            raise RuntimeError("pix2text-table-rec 未安装（请在 .venv_ocr 中 pip install）")
+            raise RuntimeError("pix2text-table-rec 未安装（请在 ocr_app/.venv 中 pip install pix2text-table-rec）")
         engine = self._mod()
         out = engine.recognize(image_path)
         if isinstance(out, dict):

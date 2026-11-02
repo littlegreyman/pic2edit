@@ -63,11 +63,11 @@
 ### 阶段 2 — 判别式 OCR 兜底（治幻觉的核心）
 - **新增文件**：`ocr_app/backends/discriminative_backend.py`（封装 RapidOCR）
 - **做法**：
-  - `rapidocr_onnxruntime` 提供 det + rec + cls 三模型 ONNX 流水线，CPU/GPU 皆可，对中文印刷体近乎零幻觉。
+  - `rapidocr`（>=3.10，支持 Python 3.14）提供 det + rec + cls 三模型 ONNX 流水线，CPU/GPU 皆可，对中文印刷体近乎零幻觉。
   - 路由：每页先跑判别式；返回文本长度 ≥ 阈值 且 平均置信度 ≥ 阈值 → 采用；否则降级 VLM。
   - 在 `backends/__init__.py` 暴露 `DiscriminativeBackend`，与现有 `LlamaCppBackend` 并列。
 - **资源**：
-  - 包：`rapidocr_onnxruntime`（拉入 `onnxruntime`）。
+  - 包：`rapidocr`（>=3.10，拉入 `onnxruntime`）。
   - 模型：PP-OCRv4 det(~4MB) + rec(~11MB) + cls(~3MB)，首次 import 从 PP 模型库/ModelScope 下载 → **需联网一次**，之后离线；应预置到 `models/` 保证真离线。
   - 显存：CPU 即可（数百 MB RAM）；`onnxruntime-gpu` 可选加速。
   - 磁盘：+~50MB。
@@ -109,7 +109,7 @@
 |---|---|---|---|---|---|---|
 | 阶段0 引擎flag | 无 | 0 | 0 | 0 | 否 | ✅ |
 | 阶段1 内嵌图修复 | 无 | 0 | 0 | 0 | 否 | ✅ |
-| 阶段2 RapidOCR | rapidocr_onnxruntime | ~50MB | 0(CPU)/<1GB | ~500MB | 模型下载一次 | ⚠️ 验证 |
+| 阶段2 RapidOCR | rapidocr(>=3.10) | ~50MB | 0(CPU)/<1GB | ~500MB | 模型下载一次 | ⚠️ 验证 |
 | 阶段3 版面 | 复用检测框(0) / doclayout-yolo | 0 / ~100MB | 0/1GB | 1GB | 模型一次 | ⚠️ 验证(torch) |
 | 阶段4 表格 | pix2text-table-rec | ~100MB | 0/1GB | 1GB | 模型一次 | ⚠️ 验证 |
 | 阶段5 MinerU(可选) | mineru | 大 | 8GB+ | — | 是 | 需 3.10–3.12 |

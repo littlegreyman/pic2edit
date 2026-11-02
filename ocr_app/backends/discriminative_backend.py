@@ -1,10 +1,10 @@
-"""判别式 OCR 后端（RapidOCR）—— 默认引擎，DeepSeek-OCR 仅作兜底。
+"""判别式 OCR 后端（RapidOCR >=3.10）—— 默认引擎，DeepSeek-OCR 仅作兜底。
 
-- 开发态：通过子进程调用独立 venv（Python 3.13）中的 _rapidocr_cli.py，
-  避免把 onnxruntime 等重型依赖塞进主 venv，也规避 3.13 wheel 可能缺失。
+- 开发态 / 运行态：RapidOCR 已随主 venv（ocr_app/.venv，Python 3.14）安装，
+  通过子进程调用 _rapidocr_cli.py（用当前解释器 sys.executable 运行，无需独立 .venv_ocr）。
 - 冻结态（PyInstaller）：无法可靠地用 ``sys.executable script.py`` 重新拉起
   子进程（单文件夹/单文件构建下行为不稳定），改为 **进程内** 直接调用
-  rapidocr_onnxruntime（已随包收集，模型在打包的 rapidocr_models/ 目录）。
+  rapidocr（已随包收集，模型在打包的 rapidocr_models/ 目录）。
   若进程内引擎初始化失败，available() 返回 False，由 ocr_pipeline 的
   try/except 降级到 VLM 兜底，不会崩溃。
 """
@@ -34,22 +34,31 @@ def _rapidocr_models_dir():
     return d if os.path.isdir(d) else None
 
 
-def _lines_from_result(result, img_path):
-    """把 RapidOCR 的 [[box, text, score], ...] 结果转成统一 lines 结构。"""
+def _lines_from_output(result, image_path):
+    """把 RapidOCROutput 对象转成统一 lines 结构。
+
+    result: rapidocr 的 RapidOCROutput（.boxes 为 (N,4,2) numpy，.txts/.scores 为 tuple）。
+    空结果（txts=None / len==0）返回 {"lines": [], ...}。
+    """
+    if result is None or getattr(result, "txts", None) is None or len(result) == 0:
+        return {"lines": [], "img_w": 0, "img_h": 0}
+    import numpy as np
+    from PIL import Image
+    boxes = np.asarray(result.boxes)
     lines = []
-    for box, text, score in (result or []):
-        ys = [p[1] for p in box]
-        xs = [p[0] for p in box]
+    W = H = 0
+    for i, (text, score) in enumerate(zip(result.txts, result.scores)):
+        box = boxes[i]
+        ys = box[:, 1]
+        xs = box[:, 0]
         lines.append({
             "text": text,
-            "y0": min(ys), "y1": max(ys),
-            "x0": min(xs), "x1": max(xs),
+            "y0": float(min(ys)), "y1": float(max(ys)),
+            "x0": float(min(xs)), "x1": float(max(xs)),
             "score": round(float(score), 3),
         })
-    W = H = 0
     try:
-        from PIL import Image
-        with Image.open(img_path) as im:
+        with Image.open(image_path) as im:
             W, H = im.size
     except Exception:
         pass
@@ -137,8 +146,17 @@ def assemble_markdown(lines, H=0):
     return "\n\n".join(out)
 
 
-def _venv_python():
-    # 跨平台选择 venv 解释器：Windows 用 Scripts\python.exe，POSIX 用 bin/python3。
+def _pick_python():
+    """选取运行 _rapidocr_cli.py 的解释器。
+
+    优先用当前解释器（ocr_app/.venv，Python 3.14），前提是 rapidocr 可导入；
+    否则回退到独立的 .venv_ocr（若仍保留）。都不可用则返回 None。
+    """
+    try:
+        import rapidocr  # 新 rapidocr 支持 3.14，随主 venv 安装
+        return sys.executable
+    except Exception:
+        pass
     if os.name == "nt" or sys.platform.startswith("win"):
         cand = os.path.join(OCR_VENV, "Scripts", "python.exe")
         return cand if os.path.exists(cand) else None
@@ -158,30 +176,23 @@ class DiscriminativeBackend:
         if _frozen():
             # 冻结态：进程内直接调用 RapidOCR（无法可靠地重新拉起子进程）
             try:
-                from rapidocr_onnxruntime import RapidOCR
+                from rapidocr import RapidOCR
                 kwargs = {}
                 models = _rapidocr_models_dir()
                 if models:
-                    det = os.path.join(models, "det.onnx")
-                    rec = os.path.join(models, "rec.onnx")
-                    cls = os.path.join(models, "cls.onnx")
-                    if os.path.isfile(det):
-                        kwargs["det_model_path"] = det
-                    if os.path.isfile(rec):
-                        kwargs["rec_model_path"] = rec
-                    if os.path.isfile(cls):
-                        kwargs["cls_model_path"] = cls
+                    # 新 rapidocr 通过 params 指定模型根目录（目录内放 det/rec/cls onnx）
+                    kwargs["params"] = {"Global.model_root_dir": models}
                 self._engine = RapidOCR(**kwargs)
             except Exception as e:
                 raise RuntimeError(
                     "判别式 OCR(RapidOCR) 进程内加载失败：%s" % e
                 )
         else:
-            self._py = _venv_python()
+            self._py = _pick_python()
             if self._py is None:
                 raise RuntimeError(
-                    "判别式 OCR 子环境缺失：请在 ocr_app 下创建 .venv_ocr(Python3.13) "
-                    "并 pip install rapidocr_onnxruntime"
+                    "判别式 OCR 子环境缺失：请在本 venv 安装 rapidocr"
+                    "（pip install rapidocr onnxruntime），或创建 ocr_app/.venv_ocr 并安装 rapidocr"
                 )
 
     def available(self) -> bool:
@@ -207,10 +218,10 @@ class DiscriminativeBackend:
 
     def _raw_inprocess(self, image_path):
         try:
-            result, _ = self._engine(image_path)
+            result = self._engine(image_path)
         except Exception:
             return None
-        return _lines_from_result(result, image_path)
+        return _lines_from_output(result, image_path)
 
     def ocr_image(self, image_path, prompt=None) -> str:
         """返回 Markdown 文本（阅读顺序拼接，已剔除页眉/页脚/页码）。识别失败返回空串。"""

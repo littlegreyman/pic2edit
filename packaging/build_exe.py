@@ -35,11 +35,11 @@ def _run(cmd):
 
 
 def install_deps():
-    print("[build] installing build deps (pyinstaller, rapidocr-onnxruntime, onnxruntime) ...")
+    print("[build] installing build deps (pyinstaller, rapidocr, onnxruntime) ...")
     _run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
     _run([sys.executable, "-m", "pip", "install", "pyinstaller"])
-    # rapidocr_onnxruntime 会拉入 onnxruntime；显式装 onnxruntime 也行
-    _run([sys.executable, "-m", "pip", "install", "rapidocr-onnxruntime", "onnxruntime"])
+    # rapidocr 会拉入 onnxruntime；显式装 onnxruntime 也行
+    _run([sys.executable, "-m", "pip", "install", "rapidocr", "onnxruntime"])
 
 
 def bundle_rapidocr_models():
@@ -49,7 +49,8 @@ def bundle_rapidocr_models():
     """
     dest = os.path.join(OCR_APP, "rapidocr_models")
     try:
-        from rapidocr_onnxruntime import RapidOCR
+        import rapidocr
+        from rapidocr import RapidOCR
         print("[build] warming up RapidOCR (downloads onnx models on first use) ...")
         RapidOCR()  # 触发下载
     except Exception as e:
@@ -60,6 +61,7 @@ def bundle_rapidocr_models():
     candidates = [
         os.path.join(os.path.expanduser("~"), ".RapidOCR"),
         os.path.join(os.path.expanduser("~"), ".cache", "rapidocr"),
+        os.path.join(os.path.dirname(rapidocr.__file__), "models"),
     ]
     found = []
     for base in candidates:

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Create the app venv and install GUI + Ollama/llama.cpp dependencies (Linux/macOS).
+# Create the app venv and install GUI + Ollama/llama.cpp DEV dependencies (Linux/macOS).
+# NOTE: RapidOCR (>=3.10, supports Python 3.14) is now installed via requirements.txt
+# into this venv — no separate .venv_ocr needed.
 # For the optional Transformers backend, see README (needs a separate Py3.11 env).
 # ============================================================================
 set -e
@@ -16,7 +18,8 @@ python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 
 echo
-echo "===== Install finished ====="
+echo "===== Install finished (dev dependencies) ====="
 echo "To start the app:     ./.venv/bin/python main.py"
 echo "To set up llama.cpp:  ./download_models.sh  then  ./run_llamacpp_server.sh"
 echo "For Ollama backend:   install Ollama, then:  ollama pull deepseek-ocr"
+echo "For PyInstaller freeze: use requirements_freeze.txt (rapidocr supports 3.14, no <=3.12 needed)"

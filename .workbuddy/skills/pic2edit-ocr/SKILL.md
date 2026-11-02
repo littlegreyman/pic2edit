@@ -25,7 +25,7 @@ agent_created: true
    - 模型档位 `--vlm-model`：`auto`（默认，按显存自动选）/ `q8` / `q4` / `bf16` / `cpu`。
    - 可选开关：`--cache`（按内容哈希缓存，重复预处理秒回）；`--prov`（每页加 `<!-- engine:xxx -->` 溯源注释）。
 3. 用项目虚拟环境运行 helper（`<skill>/scripts/pic2edit_convert.py` 相对本技能目录）：
-   - 依赖 venv 在 **`ocr_app/.venv`**（主环境，含 requests / Pillow / pypdfium2 / python-docx / PySide6）。判别式 RapidOCR 由 helper 经**子进程**调用独立的 `ocr_app/.venv_ocr`，无需手动切 venv。
+   - 依赖 venv 在 **`ocr_app/.venv`**（主环境，含 requests / Pillow / pypdfium2 / python-docx / PySide6 / rapidocr>=3.10）。判别式 RapidOCR 由 helper 经**子进程**调用 `ocr_app/.venv`（rapidocr 已支持 Python 3.14，无需独立 `.venv_ocr`），无需手动切 venv。
    - 选取 venv 里的 python（**跨平台**）：
      - Windows：`ocr_app\.venv\Scripts\python.exe`
      - Linux / macOS：`ocr_app/.venv/bin/python3`
