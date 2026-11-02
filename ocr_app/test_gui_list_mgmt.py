@@ -105,5 +105,9 @@ def main():
     print("ALL PASS: test_gui_list_mgmt")
 
 
+def test_main():
+    main()
+
+
 if __name__ == "__main__":
     main()

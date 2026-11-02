@@ -93,5 +93,9 @@ def main():
     print("ALL PASS: test_gui_tree")
 
 
+def test_main():
+    main()
+
+
 if __name__ == "__main__":
     main()

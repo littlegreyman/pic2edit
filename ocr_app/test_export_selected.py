@@ -147,5 +147,9 @@ def main():
     print("ALL PASS: test_export_selected")
 
 
+def test_main():
+    main()
+
+
 if __name__ == "__main__":
     main()

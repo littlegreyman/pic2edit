@@ -23,48 +23,35 @@ def _rows(md):
     return [ln for ln in md.splitlines() if ln.startswith("|")]
 
 
-def _check(name, cond):
-    print(f"[{'PASS' if cond else 'FAIL'}] {name}")
-    return cond
-
-
-def main():
-    ok = True
+def test_kv_text_to_markdown_table():
     md = kv_text_to_markdown_table(TEMPO)
 
     # 1) 基本结构：表头 + 分隔行 + 数据行
-    ok &= _check("输出为 Markdown 表格", md.startswith("| 项目 | 内容 |"))
-    ok &= _check("数据行数 >= 12", len(_rows(md)) >= 14)
+    assert md.startswith("| 项目 | 内容 |")
+    assert len(_rows(md)) >= 14
 
     # 2) 关键键值各就各位
-    ok &= _check("产品名称行", "| 产品名称 | 得宝牌抽取式纸面巾 |" in md)
-    ok &= _check("执行标准值含后缀", "| 执行标准 | GB/T 20808 优等品 检验合格 |" in md)
-    ok &= _check("许可证行1", "浙卫消证字（2008）第0054号" in md)
-    ok &= _check("许可证行2（重复键保序）",
-                 md.count("生产企业卫生许可证号") == 2)
+    assert "| 产品名称 | 得宝牌抽取式纸面巾 |" in md
+    assert "| 执行标准 | GB/T 20808 优等品 检验合格 |" in md
+    assert "浙卫消证字（2008）第0054号" in md
+    # 3) 重复键保序
+    assert md.count("生产企业卫生许可证号") == 2
 
-    # 3) 括号内冒号不算键：（代码：F）留在地址值里
-    ok &= _check("（代码：F）不被拆成键", "| 代码 |" not in md)
-    ok &= _check("代码随地址保留", "凤坤路9号（代码：F）" in md)
+    # 4) 括号内冒号不算键：（代码：F）留在地址值里
+    assert "| 代码 |" not in md
+    assert "凤坤路9号（代码：F）" in md
 
-    # 4) 无冒号尾随文本并入前值/备注
-    ok &= _check("条形码保留", "947509910710" in md)
+    # 5) 无冒号尾随文本并入前值/备注
+    assert "947509910710" in md
 
-    # 5) 已是 Markdown 表格 → 原样返回
+    # 6) 已是 Markdown 表格 → 原样返回
     already = "| A | B |\n| --- | --- |\n| 1 | 2 |"
-    ok &= _check("已是表格则原样返回", kv_text_to_markdown_table(already) == already)
+    assert kv_text_to_markdown_table(already) == already
 
-    # 6) 无键值文本 → 原样返回
+    # 7) 无键值文本 → 原样返回
     plain = "这是一段没有冒号键值的普通文本"
-    ok &= _check("无键值原样返回", kv_text_to_markdown_table(plain) == plain)
+    assert kv_text_to_markdown_table(plain) == plain
 
-    # 7) 空/极短输入安全
-    ok &= _check("空串安全", kv_text_to_markdown_table("") == "")
-    ok &= _check("空白安全", kv_text_to_markdown_table("  \n ") == "  \n ")
-
-    print("\nTABLE_UTILS SUMMARY:", "ALL PASS" if ok else "FAILURES PRESENT")
-    sys.exit(0 if ok else 1)
-
-
-if __name__ == "__main__":
-    main()
+    # 8) 空/极短输入安全
+    assert kv_text_to_markdown_table("") == ""
+    assert kv_text_to_markdown_table("  \n ") == "  \n "

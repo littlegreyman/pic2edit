@@ -65,41 +65,24 @@ LOOP_BLOCK_DUP = GENUINE_BLOCK + " " + _BLOCK_DUP
 # 已改由生成参数层面根治（见文件头 NOTE），客户端不做该场景的断言。
 
 
-def _check(name, cond):
-    print(f"[{'PASS' if cond else 'FAIL'}] {name}")
-    return cond
-
-
-def main():
-    ok = True
+def test_trim_trailing_repetition():
     # 1) clean text untouched
-    ok &= _check("clean text unchanged", trim_trailing_repetition(REAL) == REAL)
+    assert trim_trailing_repetition(REAL) == REAL
     # 2) loop with brackets is trimmed to the real prefix (loop removed)
     t1 = trim_trailing_repetition(LOOP_BRACKET)
-    ok &= _check("bracket loop trimmed", t1 == REAL)
-    ok &= _check("bracket loop removes all [20xx]", t1.count("[20") == 0)
-    # 3) same-notation verbatim loop is trimmed. The loop line differs from the
-    #    real （鲁） line by a parenthesis, so it is a *new* block (its first
-    #    occurrence is the loop start) and the whole loop is removed -> 0 left.
+    assert t1 == REAL
+    assert t1.count("[20") == 0
+    # 3) same-notation verbatim loop is trimmed
     t2 = trim_trailing_repetition(LOOP_SAME)
-    ok &= _check("same-notation loop trimmed", t2 == REAL)
-    ok &= _check("same-notation loop removes repeats",
-                 t2.count(REPEAT_LINE) == 0)
+    assert t2 == REAL
+    assert t2.count(REPEAT_LINE) == 0
     # 4) a single legitimate bracketed code is NOT treated as a loop
     t3 = trim_trailing_repetition(CLEAN_WITH_ONE_BRACKET)
-    ok &= _check("single bracket not trimmed", t3 == CLEAN_WITH_ONE_BRACKET)
+    assert t3 == CLEAN_WITH_ONE_BRACKET
     # 5) block regurgitated once with a differing final entry is cut (Signal C)
     t4 = trim_trailing_repetition(LOOP_BLOCK_DUP)
-    ok &= _check("block-dup (differing tail) trimmed", t4 == GENUINE_BLOCK)
-    ok &= _check("block-dup removes the extra copy", t4.endswith("服务热线：4006-315-138")
-                 and t4.count("服务热线") == 1)
+    assert t4 == GENUINE_BLOCK
+    assert t4.endswith("服务热线：4006-315-138") and t4.count("服务热线") == 1
     # 6) empty / short input safe
-    ok &= _check("empty safe", trim_trailing_repetition("") == "")
-    ok &= _check("short safe", trim_trailing_repetition("abc") == "abc")
-
-    print("\nTEXT_UTILS SUMMARY:", "ALL PASS" if ok else "FAILURES PRESENT")
-    sys.exit(0 if ok else 1)
-
-
-if __name__ == "__main__":
-    main()
+    assert trim_trailing_repetition("") == ""
+    assert trim_trailing_repetition("abc") == "abc"

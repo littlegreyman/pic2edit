@@ -3,10 +3,13 @@
 设置保存在用户主目录下的 ~/.pic2edit/config.json，保证离线、持久化。
 """
 import json
+import logging
 import os
 from dataclasses import dataclass, field, asdict
 
 from utils.app_home import writable_app_home
+
+_logger = logging.getLogger("config")
 
 # 配置目录：冻结态跟随安装盘（dirty install root），开发态为 ~/.pic2edit。
 CONFIG_DIR = writable_app_home()
@@ -119,7 +122,15 @@ class Config:
                     else:
                         setattr(cfg, k, v)
             return cfg
-        except Exception:
+        except Exception as e:
+            # 损坏的配置不再静默回退：记录警告并把坏文件改名，便于排查，
+            # 也避免下次 load 又读到同一份坏 JSON 陷入循环。
+            _logger.warning("config load failed, falling back to defaults: %s", e)
+            try:
+                if os.path.exists(CONFIG_PATH):
+                    os.replace(CONFIG_PATH, CONFIG_PATH + ".corrupt")
+            except Exception:
+                pass
             return cls()
 
     def prompt(self) -> str:

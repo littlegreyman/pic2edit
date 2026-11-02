@@ -20,6 +20,7 @@ sys.path.insert(0, HERE)
 from utils.input_prep import InputItem  # noqa: E402  (used as doc/type reference)
 from backends.discriminative_backend import DiscriminativeBackend  # noqa: E402
 from utils.logging_setup import get_logger  # noqa: E402
+from config import ModelParams  # noqa: E402
 
 _logger = get_logger("ocr_pipeline")
 
@@ -50,7 +51,8 @@ def _vlm_backend(url, model):
         from backends.llamacpp_backend import LlamaCppBackend
         b = LlamaCppBackend(url, model)
         return b if b.available() else None
-    except Exception:
+    except Exception as e:
+        _logger.warning("vlm backend init failed (url=%s, model=%s): %s", url, model, e)
         return None
 
 
@@ -94,7 +96,8 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
     if not skip_discriminative:
         try:
             disc = DiscriminativeBackend()
-        except Exception:
+        except Exception as e:
+            _logger.warning("discriminative backend unavailable, skipping: %s", e)
             disc = None
 
     # 表格识别（阶段4，可选依赖）
@@ -104,7 +107,8 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
             from backends.table_backend import TableRecognizer
             tr = TableRecognizer()
             table_rec = tr if tr.available() else None
-        except Exception:
+        except Exception as e:
+            _logger.warning("table recognizer unavailable: %s", e)
             table_rec = None
 
     vlm = None
@@ -116,11 +120,13 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
 
     # 把模型采样参数挂到 VLM 后端实例上（llama.cpp 在 _chat 时读取）。
     # 缺省 None 时后端保留自身默认（= 已验证的 ModelParams 默认值）。
-    if vlm is not None and model_params is not None:
+    # 把模型采样参数挂到 VLM 后端实例上。model_params 为 None 时显式重置为后端默认值
+    # （ModelParams()），避免复用同一后端实例时残留上一次调用的参数（状态泄漏）。
+    if vlm is not None:
         try:
-            vlm.model_params = model_params
-        except Exception:
-            pass
+            vlm.model_params = model_params or ModelParams()
+        except Exception as e:
+            _logger.warning("failed to set model_params on vlm backend: %s", e)
 
     # VLM 实际使用的提示词：优先用调用方传入的（来自 GUI 所选输出格式模板），
     # 为空则回退到默认中文指令。这样“图表/公式/纯文本”等输出格式才能真正影响 VLM。
@@ -134,11 +140,19 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
                 t = table_rec.recognize(it.image_path)
                 if t and t.strip():
                     md = t
-            except Exception:
+            except Exception as e:
+                _logger.warning("table recognition failed for %s: %s", it.name, e)
                 md = ""
         # 判别式优先（零幻觉，干净中文印刷页在此即结束，VLM 不会被触发）
         if not _quality_ok(md) and disc is not None and disc.available():
-            md = disc.ocr_image(it.image_path)
+            # 单张坏图/异常不应炸掉整个批次：捕获后保留已有结果（表格识别），
+            # 交由后续 VLM 兜底；若仍无结果则本页留空而非中断其它页。
+            try:
+                disc_md = disc.ocr_image(it.image_path)
+                if disc_md:
+                    md = disc_md
+            except Exception as e:
+                _logger.warning("discriminative OCR failed for %s: %s", it.name, e)
         # VLM 兜底（仅当判别式未给出合格结果）
         if not _quality_ok(md) and vlm is not None:
             try:
@@ -148,7 +162,8 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
                 else:
                     # 兜底输出疑似幻觉：丢弃，保留判别式结果（哪怕为空），绝不把幻觉写进文档
                     _logger.warning("VLM fallback output discarded as hallucination for %s", it.name)
-            except Exception:
+            except Exception as e:
+                _logger.warning("VLM fallback failed for %s: %s", it.name, e)
                 md = md or ""
         it.result = md
         it.status = "完成" if md else "失败"
