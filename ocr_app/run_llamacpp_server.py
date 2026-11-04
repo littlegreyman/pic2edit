@@ -129,13 +129,16 @@ def main():
     exe, model, mmproj = discover()
     if not exe:
         sys.stderr.write(
-            "ERROR: llama-server.exe not found in bin/.\n"
-            "  Run download_models.bat first (it downloads the official prebuilt server).\n"
+            "ERROR: llama-server not found in bin/ (bin/llama-server on Linux/macOS, "
+            "bin/llama-server.exe on Windows).\n"
+            "  Run download_models.sh (or download_models.bat) first to fetch the official "
+            "prebuilt server.\n"
         )
         sys.exit(1)
     if not model:
         sys.stderr.write(
-            "ERROR: no .gguf model found in models/. Run download_models.bat to download it.\n"
+            "ERROR: no .gguf model found in models/. Run download_models.sh "
+            "(or download_models.bat) to download it.\n"
         )
         sys.exit(1)
     cmd = build_command(exe, model, mmproj)
