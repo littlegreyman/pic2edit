@@ -14,15 +14,17 @@
   4) 逐项走统一流水线（判别式优先 + VLM 兜底 + 版面/表格感知）；
   5) 通过「探针包装」记录每页使用的引擎（disc / vlm / table），用于无幻觉溯源；
   6) 全文重复护栏：截断 VLM/判别式偶发的整段循环重复，避免噪声入库；
-  7) 按 --format 导出 md / txt / docx / json，落到输出路径并打印。
+  7) 按 --format 导出 md / txt / docx / json / html，落到输出路径并打印。
 
 新增能力（相对原版，均在 skill 层、不修改 pic2edit 项目）：
   --cache       按「文件内容哈希 + mode + 版本」缓存识别结果，重复预处理秒回；
   --prov        在 md/txt/docx 输出中为每个页面加 `<!-- engine:xxx -->` 溯源注释；
-  --format json 输出结构化 JSON（含每页 text 与 engine），便于入库一致性校验。
+  --format json 输出结构化 JSON（含每页 text 与 engine），便于入库一致性校验；
+  --format md/docx 无凭证 schema 时，若该页有明显表格版式（如「现行 | 修正」两栏
+                对照表），用**共享** table_layout 还原成真表格（与 GUI 同源）。
 
 用法：
-  python pic2edit_convert.py <输入图片/PDF> [--format md|docx|txt|json]
+  python pic2edit_convert.py <输入图片/PDF> [--format md|docx|txt|json|html]
                               [--mode markdown|ocr|figure|table]
                               [--url http://localhost:8080]
                               [--gpu-layers N] [--out OUT_PATH] [--stop-server]
@@ -111,6 +113,8 @@ if OCR_APP not in sys.path:
 from utils.input_prep import prepare_input                      # noqa: E402
 from utils.export_docx import save_text, md_to_docx              # noqa: E402
 from utils.table_utils import kv_text_to_markdown_table         # noqa: E402
+# 与 GUI 同源的坐标表格重建（两门户共用一套逻辑，避免 md 表格能力漂移）
+from utils.table_layout import build_table_from_lines            # noqa: E402
 from backend_api import (  # noqa: E402
     LlamaCppBackend,
     DiscriminativeBackend,
@@ -1949,38 +1953,28 @@ def _cluster_rows(cells, H, row_tol_frac=0.02):
     return rows
 
 
-def _build_page_table(cells, W, H, as_html=True):
+def _build_page_table(cells, W, H):
     """按 OCR 坐标“原样”重建整页表格：不套用任何固定表头/列顺序，仅依据文本块
     坐标做行列聚类与（保守的）合并单元格推断。页面所有文字——标题、表头
     （发票代码/号码/日期）、购销方信息、明细表、脚注（收款人/复核/开票人）等——
     一并纳入，零丢弃、零重排。
 
-    - HTML：按全页自然列网格对齐渲染真实 <table>；跨列/跨行以“几何覆盖”推断
-      （colspan = 文本块 x 范围覆盖的列中心数；rowspan = y 范围覆盖的行中心数），
-      天然抑制旧逻辑里 colspan=3 之类的过度合并。
-    - md/txt：逐行按 x 升序平铺单元格（保留原始从左到右阅读顺序），不强制全局列对齐、
-      不强加表头，避免在表格里“自行理解重新排序”。
+    只产出 HTML ``<table>``：按全页自然列网格对齐，跨列/跨行以“几何覆盖”推断
+    （colspan = 文本块 x 范围覆盖的列中心数；rowspan = y 范围覆盖的行中心数），
+    天然抑制旧逻辑里 colspan=3 之类的过度合并。
+
+    Markdown 表格**不走本函数**，统一由 ``_layout_table_md`` 调共享
+    ``utils/table_layout.build_table_from_lines``（与 GUI 同源）。原先的
+    ``as_html=False`` 平铺分支既无调用方（死代码），产出的行也缺 ``| --- |``
+    分隔行（多数渲染器不成表），已删除。
     """
     if len(cells) < 2:
         txts = [c["text"].strip() for c in cells if c["text"].strip()]
-        if as_html:
-            return "<table><tr><td>" + "<br>".join(
-                _esc_html(t) for t in txts) + "</td></tr></table>"
-        return "\n".join(txts)
+        return "<table><tr><td>" + "<br>".join(
+            _esc_html(t) for t in txts) + "</td></tr></table>"
     rows = _cluster_rows(cells, H)
     if not rows:
         return ""
-
-    if not as_html:
-        # md/txt：逐行按原始 x 顺序平铺，不做重排、不强加表头
-        out = []
-        for ri in range(len(rows)):
-            cells_row = [c["text"].strip().replace("|", "丨")
-                         for c in sorted(rows[ri]["cells"], key=lambda c: c["x0"])
-                         if c["text"].strip()]
-            if cells_row:
-                out.append("| " + " | ".join(cells_row) + " |")
-        return "\n".join(out)
 
     # ---- HTML：全页列网格（合并容差内的相邻左右边缘）----
     xs = sorted(set(round(v, 1) for c in cells for v in (c["x0"], c["x1"])))
@@ -2074,12 +2068,37 @@ def _html_faithful_block(page):
     lines = page.get("lines") or []
     W, H = page.get("img_w") or 0, page.get("img_h") or 0
     if lines and W and H:
-        tbl = _build_page_table(lines, W, H, as_html=True)
+        tbl = _build_page_table(lines, W, H)
         if tbl:
             return f"<section><h2>按 OCR 坐标还原版面</h2>{tbl}</section>"
     raw = page.get("raw_text") or page.get("text") or ""
     return ("<section><h2>识别文本（本页无坐标数据，无法还原版面）</h2>"
             f"<pre>{_esc_html(raw)}</pre></section>")
+
+
+def _layout_table_md(p):
+    """用**共享** table_layout 把带坐标的页面还原成 Markdown 表格（与 GUI 同源）。
+
+    为什么要共享而不是在 skill 里再写一套：GUI 的表格能力来自
+    ``ocr_app/utils/table_layout.build_table_from_lines``（中部 gutter 优先切两栏 +
+    端点聚类回退，产出带 ``| --- |`` 分隔行的合法 md 表）。skill 此前只有 ``html``
+    走坐标重建，md/txt/docx 直接吐原始 OCR 文本，于是"两栏对照表"在 md 里排不出表——
+    同一份输入，GUI 出表、skill 不出表。这里直接复用它，从此两侧同源。
+
+    仅在页面**明显是表格版式**时返回非空（≥50% 视觉行含 ≥2 格）；单栏正文、
+    双栏文章每行 1 格 → 返回 ""，由调用方回退为识别原文，避免把文章误塞进表格。
+    """
+    lines = p.get("lines") or []
+    W = p.get("img_w") or 0
+    H = p.get("img_h") or 0
+    if not lines or not W or not H:
+        return ""
+    try:
+        return build_table_from_lines(lines, W, H)
+    except Exception as e:      # 表格重建失败绝不能拖垮整篇导出
+        sys.stderr.write(
+            f"[warn] 表格版式还原失败(第{p.get('page', '?')}页): {e}\n")
+        return ""
 
 
 def _render(data, fmt, out_path, input_path, prov, mode):
@@ -2092,7 +2111,8 @@ def _render(data, fmt, out_path, input_path, prov, mode):
     分派规则：
       - ``json``：原样输出 data（schema + engine + 坐标），供 RAG / 资料库接入
       - ``html``：命中 schema → 严格版式；否则 → 坐标还原原图版面
-      - ``md`` / ``docx``：命中 schema → 可读 schema 文本；否则 → 可读识别文本
+      - ``md`` / ``docx``：命中 schema → 可读 schema 文本；否则 → 表格版面还原为
+        Markdown 表（与 GUI 共用 ``table_layout``），非表格页回退识别文本
       - ``txt``：同 md，用 ``标签：值`` + TAB 分隔
     原始 OCR 全文一律不进入以上任何输出，只由 log_store 落盘。
     """
@@ -2130,8 +2150,14 @@ def _render(data, fmt, out_path, input_path, prov, mode):
                    else _html_faithful_block(p))
         elif fmt == "txt":
             blk = _render_txt_schema(doc) if doc else raw
-        else:  # md / docx
-            blk = _render_md_schema(doc) if doc else raw
+        elif doc:
+            # md / docx 且命中凭证 schema：严格按 schema 输出（字段化，最可读）
+            blk = _render_md_schema(doc)
+        else:
+            # md / docx 且无 schema：**表格版式优先**还原成真 Markdown 表
+            # （两栏对照表/明细表在此成表；docx 经 md_to_docx 会转成真实 Word 表格），
+            # 非表格页面 _layout_table_md 返回 "" → 回退识别原文。
+            blk = _layout_table_md(p) or raw
         if prov:
             blk = f"<!-- engine:{engine} -->\n{blk}"
         blocks.append(blk)
