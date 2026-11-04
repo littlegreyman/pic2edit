@@ -138,14 +138,23 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
     # 为空则回退到默认中文指令。这样“图表/公式/纯文本”等输出格式才能真正影响 VLM。
     vlm_prompt = prompt if (prompt and prompt.strip()) else ZH_PROMPT
 
+    _logger.info(
+        "OCR pipeline start: mode=%s skip_disc=%s guard=%s disc=%s vlm=%s table=%s items=%d",
+        mode, skip_discriminative, guard_hallucination,
+        bool(disc is not None and disc.available()),
+        bool(vlm is not None), table_rec is not None, len(items),
+    )
+
     for it in items:
         md = ""
+        source = "empty"
         # 表格模式：优先表格识别
         if table_rec is not None:
             try:
                 t = table_rec.recognize(it.image_path)
                 if t and t.strip():
                     md = t
+                    source = "table"
             except Exception as e:
                 _logger.warning("table recognition failed for %s: %s", it.name, e)
                 md = ""
@@ -157,6 +166,7 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
                 disc_md = disc.ocr_image(it.image_path)
                 if disc_md:
                     md = disc_md
+                    source = "disc"
             except Exception as e:
                 _logger.warning("discriminative OCR failed for %s: %s", it.name, e)
         # VLM 兜底（仅当判别式未给出合格结果）
@@ -165,6 +175,7 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
                 vmd = vlm.ocr_image(it.image_path, vlm_prompt)
                 if vmd and (not guard_hallucination or not _looks_hallucinated(vmd)):
                     md = vmd
+                    source = "vlm"
                 else:
                     # 兜底输出疑似幻觉：丢弃，保留判别式结果（哪怕为空），绝不把幻觉写进文档
                     _logger.warning("VLM fallback output discarded as hallucination for %s", it.name)
@@ -173,4 +184,8 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
                 md = md or ""
         it.result = md
         it.status = "完成" if md else "失败"
+        # 每页溯源日志：一眼看出本页由判别式(disc)/VLM(vlm)/表格(table)还是空白(empty)产出。
+        # 修复此前“成功走判别式时全程静默、无法确认是否触发 VLM”的可观测性缺口。
+        _logger.info("OCR done: %s source=%s chars=%d status=%s",
+                     it.name, source, len(md), it.status)
     return items

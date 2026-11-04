@@ -12,9 +12,14 @@ import subprocess
 import sys
 import tempfile
 import time
+import logging
+import io
+from unittest import mock
 
 import backend_api as api
 from backend_api import RoutingPolicy
+from backends import ocr_pipeline
+
 
 
 def _alive(pid: int) -> bool:
@@ -128,3 +133,76 @@ def test_routing_sandbox_skips_discriminative():
     )
     if 0 < vmem <= 6:
         assert pol.skip_discriminative is True
+
+
+class _FakeItem:
+    def __init__(self, name, path=""):
+        self.name = name
+        self.image_path = path
+        self.result = ""
+        self.status = ""
+
+
+class _FakeBackend:
+    """可记录调用次数的假后端，ocr_image 返回固定文本。"""
+
+    def __init__(self, text):
+        self._text = text
+        self.calls = 0
+
+    def available(self):
+        return True
+
+    def ocr_image(self, path, prompt=None):
+        self.calls += 1
+        return self._text
+
+
+def _capture_pipeline_logs():
+    buf = io.StringIO()
+    lg = logging.getLogger("pic2edit.ocr_pipeline")
+    lg.setLevel(logging.INFO)
+    handler = logging.StreamHandler(buf)
+    handler.setLevel(logging.INFO)
+    lg.addHandler(handler)
+    lg.propagate = False
+    return buf, handler
+
+
+def test_pipeline_logs_source_disc_when_discriminative_ok():
+    """修复可观测性缺口：干净中文页走判别式时，日志须记录 source=disc 且 VLM 不触发。
+
+    此前成功走判别式时全程静默，无法确认 VLM 是否被调用。
+    """
+    buf, handler = _capture_pipeline_logs()
+    disc = _FakeBackend("注册会计师协会自律监督工作意见全文。")
+    vlm = _FakeBackend("VLM 兜底输出（不应出现）")
+    try:
+        items = [_FakeItem("第1页", "/tmp/p1.png"), _FakeItem("第2页", "/tmp/p2.png")]
+        with mock.patch.object(ocr_pipeline, "DiscriminativeBackend", lambda: disc):
+            ocr_pipeline.run(items, vlm_backend=vlm, skip_discriminative=False,
+                            guard_hallucination=True, mode="markdown")
+        log = buf.getvalue()
+        assert "OCR pipeline start:" in log, "应记录任务级路由决策"
+        assert log.count("source=disc") == 2, "每页都应记 source=disc"
+        assert vlm.calls == 0, "干净中文页不应触发 VLM 兜底"
+    finally:
+        logging.getLogger("pic2edit.ocr_pipeline").removeHandler(handler)
+
+
+def test_pipeline_logs_source_vlm_on_discriminative_failure():
+    """判别式失败时须走 VLM 兜底，并记录 source=vlm。"""
+    buf, handler = _capture_pipeline_logs()
+    disc = _FakeBackend("")  # 判别式空结果
+    vlm = _FakeBackend("VLM 识别出的中文内容。")
+    try:
+        items = [_FakeItem("扫描页", "/tmp/s.png")]
+        with mock.patch.object(ocr_pipeline, "DiscriminativeBackend", lambda: disc):
+            ocr_pipeline.run(items, vlm_backend=vlm, skip_discriminative=False,
+                            guard_hallucination=True, mode="markdown")
+        log = buf.getvalue()
+        assert "source=vlm" in log, "判别式失败应记 source=vlm"
+        assert vlm.calls == 1, "判别式空结果应触发 VLM 兜底一次"
+    finally:
+        logging.getLogger("pic2edit.ocr_pipeline").removeHandler(handler)
+
