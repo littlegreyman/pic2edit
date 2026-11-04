@@ -1,11 +1,11 @@
 """后台 OCR 工作线程：避免界面卡顿。"""
 from PySide6.QtCore import QThread, Signal
 
-from backends.base import OCRBackend
+from backend_api import OCRBackend
 from utils.input_prep import InputItem
 from utils.logging_setup import get_logger, log_exception
 from utils.table_utils import kv_text_to_markdown_table
-from backends.ocr_pipeline import run as pipeline_run
+from backend_api import run as pipeline_run, RoutingPolicy
 
 _logger = get_logger("worker")
 
@@ -31,8 +31,11 @@ class OcrWorker(QThread):
         # 输出格式真正生效：
         # - 表格/图表/HTML表格 模式跳过判别式（RapidOCR 会压平/漏识别表格与图，交由 VLM 原生输出）；
         # - 图表/公式模式下关闭英文 boilerplate 幻觉守卫（公式/化学符号等含拉丁字符属正常）。
-        self.skip_disc = as_table or (prompt_template in ("figure", "html_table"))
-        self.guard = prompt_template != "figure"
+        # 路由策略收敛到共享内核 RoutingPolicy：页面类型决定「是否跳过判别式」
+        # 与「是否启用幻觉守卫」，GUI 与 Skill 共用同一套规则（修复两侧路由不一致）。
+        self.policy = RoutingPolicy.for_page_type(
+            "table" if as_table else prompt_template,
+        )
 
     def run(self):
         total = len(self.indices)
@@ -51,13 +54,10 @@ class OcrWorker(QThread):
                     vlm_backend=self.backend,
                     use_vlm_fallback=True,
                     mode="markdown",
-                    # 跳过判别式：表格/图表模式（RapidOCR 会压平或漏识别表格与图，
-                    # 交由 VLM 原生输出）；其余文本模式保留判别式优先（零幻觉）。
-                    skip_discriminative=self.skip_disc,
+                    # 路由策略（页面类型驱动）替代硬编码的 skip_discriminative/guard_hallucination
+                    policy=self.policy,
                     # 把 GUI 所选输出格式的提示词真正传给 VLM（之前被硬编码 ZH_PROMPT 屏蔽）
                     prompt=self.prompt,
-                    # 图表/公式模式关闭幻觉守卫（正常公式/符号含拉丁字符，不应被误判丢弃）
-                    guard_hallucination=self.guard,
                     # 把配置化的模型采样参数传给 VLM（llama.cpp 在请求 payload 中生效）
                     model_params=self.model_params,
                 )

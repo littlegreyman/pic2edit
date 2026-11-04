@@ -15,6 +15,7 @@ import urllib.request
 from PySide6.QtCore import QThread, Signal
 
 from utils.app_home import data_root
+from engine_launcher import EngineLauncher
 
 # 应用根目录：冻结态 = 安装根（引擎/模型/脚本都随之），开发态 = ocr_app/。
 OCR_APP_DIR = data_root()
@@ -31,17 +32,16 @@ class ServerStarter(QThread):
         self.url = url.rstrip("/")
         self.cfg = cfg
         self._proc = None
-        self._done = False
+        self._launcher = None
+        self._done = threading.Event()  # 跨线程读写语义正确、原子
 
     def stop(self):
         """终止正在启动的引擎（用户取消时调用）。"""
         try:
-            if self._proc is not None and self._proc.poll() is None:
+            if self._launcher is not None:
+                self._launcher.stop(self._proc)
+            elif self._proc is not None and self._proc.poll() is None:
                 self._proc.terminate()
-                try:
-                    self._proc.wait(timeout=5)
-                except Exception:
-                    self._proc.kill()
         except Exception:
             pass
 
@@ -60,9 +60,9 @@ class ServerStarter(QThread):
             self._fail("自动启动引擎异常：\n" + _tb.format_exc())
 
     def _fail(self, msg):
-        if self._done:
+        if self._done.is_set():
             return
-        self._done = True
+        self._done.set()
         self.failed.emit(msg)
 
     def _popen_kwargs(self):
@@ -99,7 +99,8 @@ class ServerStarter(QThread):
         self.log.emit("[launch] " + " ".join(cmd))
         self.log.emit("[wait] 正在把模型加载进显存（首次约 1–3 分钟），请稍候…")
         try:
-            self._proc = subprocess.Popen(cmd, **self._popen_kwargs())
+            self._launcher = EngineLauncher()
+            self._proc = self._launcher.start(cmd, cwd=OCR_APP_DIR)
         except Exception as e:
             self._fail(
                 "启动 llama-server 失败：%r\n"
@@ -126,7 +127,8 @@ class ServerStarter(QThread):
         self.log.emit("[launch] " + " ".join(cmd))
         self.log.emit("[wait] 正在加载 transformers 模型（首次约 1–3 分钟），请稍候…")
         try:
-            self._proc = subprocess.Popen(cmd, **self._popen_kwargs())
+            self._launcher = EngineLauncher()
+            self._proc = self._launcher.start(cmd, cwd=OCR_APP_DIR)
         except Exception as e:
             self._fail("启动 transformers 服务失败：%r" % e)
             return
@@ -136,12 +138,12 @@ class ServerStarter(QThread):
     def _await_ready(self, timeout):
         ok = self._probe(timeout)
         if ok:
-            if self._done:
+            if self._done.is_set():
                 return
-            self._done = True
+            self._done.set()
             self.server_started.emit()
             return
-        if self._done:  # _probe 已因进程退出而 _fail
+        if self._done.is_set():  # _probe 已因进程退出而 _fail
             return
         code = self._proc.poll()
         if code is None:
@@ -165,7 +167,7 @@ class ServerStarter(QThread):
             bases.append(self.url.replace("localhost", "127.0.0.1"))
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if self._done:
+            if self._done.is_set():
                 return False
             if self._proc is not None and self._proc.poll() is not None:
                 code = self._proc.poll()

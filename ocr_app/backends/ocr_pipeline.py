@@ -81,17 +81,23 @@ def _looks_hallucinated(md):
 
 def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deepseek-ocr",
         use_vlm_fallback=True, mode="markdown", skip_discriminative=False,
-        prompt=None, guard_hallucination=True, model_params=None):
+        prompt=None, guard_hallucination=True, model_params=None, policy=None):
     """填充每个 InputItem.result（Markdown）。返回 items。
 
     vlm_backend: 兜底用的 VLM 后端实例（如 LlamaCppBackend / OllamaBackend /
         TransformersBackend）。为 None 时回退到按 server_url/model 构造的
         LlamaCppBackend。use_vlm_fallback=False 则纯判别式（无 GPU 也可出文件）。
     mode="table" 会尝试用表格识别器处理表格区域（需 pix2text 依赖）。
-    skip_discriminative: 跳过判别式后端（RapidOCR）。用于内存受限环境
-        （如 WorkBuddy 沙箱 ulimit -v=4GB），此时 onnxruntime 加载模型会被
-        OOM killer 连父进程一起 SIGKILL(137)；直接走 VLM 兜底（需本机 :8080）。
+    skip_discriminative / guard_hallucination: 旧式逐项参数；当 ``policy`` 传入时
+        以 RoutingPolicy 为准（两者同时存在时 policy 优先生效）。保留旧参数仅为
+        向后兼容既有测试与调用方。
+    policy: 共享内核 RoutingPolicy（推荐）。统一表达「是否跳过判别式」「是否启用
+        幻觉守卫」，避免各前端各自硬编码。
     """
+    # 路由策略：policy 优先生效，否则回落到旧式逐项参数
+    if policy is not None:
+        skip_discriminative = policy.skip_discriminative
+        guard_hallucination = policy.guard_hallucination
     disc = None
     if not skip_discriminative:
         try:

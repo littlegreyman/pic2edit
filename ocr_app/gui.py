@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 import markdown
 
 from config import Config, RESOLUTION_MODES, PROMPT_LABELS, ModelParams, MODEL_PARAM_PRESETS
-from backends import OllamaBackend, TransformersBackend, LlamaCppBackend
+from backend_api import OllamaBackend, TransformersBackend, LlamaCppBackend
 from backends.server_launcher import ServerStarter
 from worker import OcrWorker
 from utils.input_prep import prepare_input, InputItem, InputDocument

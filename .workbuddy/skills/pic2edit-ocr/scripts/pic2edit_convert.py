@@ -113,7 +113,8 @@ from utils.export_docx import save_text, md_to_docx              # noqa: E402
 from utils.table_utils import kv_text_to_markdown_table         # noqa: E402
 from backends.llamacpp_backend import LlamaCppBackend           # noqa: E402
 from backends.discriminative_backend import DiscriminativeBackend  # noqa: E402
-from backends.ocr_pipeline import run as pipeline_run               # noqa: E402
+from backends.ocr_pipeline import run as pipeline_run
+from backends.routing import RoutingPolicy                          # noqa: E402               # noqa: E402
 import run_llamacpp_server as launcher                           # noqa: E402
 
 # 发票经典版式还原（schema 驱动，纯 stdlib，无 pic2edit 依赖）
@@ -2291,8 +2292,13 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
     # 此时跳过判别式，直接走 VLM 兜底（依赖本机 :8080 的 llama-server）。
     # 也可用环境变量 PIC2EDIT_SKIP_DISCRIMINATIVE=1 强制跳过。
     _force = os.environ.get("PIC2EDIT_SKIP_DISCRIMINATIVE", "").lower() in ("1", "true", "yes")
-    # 手写体（P0 预筛命中）也强制跳过判别式，直走 VLM。
-    skip_disc = _force or _hw or (0 < _vmem_limited_gb() <= 6)
+    # 统一路由策略收敛到 ocr_app RoutingPolicy：页面类型(table/figure/html_table) + 手写预筛
+    # + 沙箱内存受限 + 强制跳过，均跳过判别式直走 VLM 兜底；图表模式关闭幻觉守卫。
+    # 与 GUI 使用同一套规则，避免两侧行为不一致（如防伪底纹发票 GUI 缺逃生口）。
+    _policy = RoutingPolicy.for_page_type(
+        mode, force_skip=_force, hw_detected=_hw, vmem_limited_gb=_vmem_limited_gb(),
+    )
+    skip_disc = _policy.skip_discriminative
     if skip_disc:
         sys.stderr.write("[info] 跳过判别式(RapidOCR)，仅用 VLM 兜底(需本机 :8080 的 llama-server)\n")
 
@@ -2350,14 +2356,14 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
             # 导致 _quality_ok 通过、VLM 兜底被门控掉、DeepSeek-OCR 根本没被调用。
             probe = _VlmProbe(url, "deepseek-ocr")
             pipeline_run(items, vlm_backend=probe, server_url=url, model="deepseek-ocr",
-                         use_vlm_fallback=True, mode=mode, skip_discriminative=skip_disc)
+                         use_vlm_fallback=True, mode=mode, policy=_policy)
             vlm_probe = probe.called
         else:
             # disc 可用分支也用探针包装 VLM 后端：确保「判别式为主 + VLM 兜底」时，
             # 若内部真触发了兜底调用，也能被溯源标记（修复原 disc_ok 分支的虚假溯源）。
             probe = _VlmProbe(url, "deepseek-ocr")
             pipeline_run(items, vlm_backend=probe, server_url=url, model="deepseek-ocr",
-                         use_vlm_fallback=True, mode=mode, skip_discriminative=skip_disc)
+                         use_vlm_fallback=True, mode=mode, policy=_policy)
             vlm_probe = probe.called
         # 先快照原始 OCR 文本：kv 后处理会改写 it.result，需在此之前保留“完整原文”
         # 全文重复护栏：VLM/判别式偶发「整段循环重复」（如重庆票样），截断后再入库，
