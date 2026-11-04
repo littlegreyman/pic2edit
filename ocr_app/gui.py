@@ -1,5 +1,6 @@
 """PySide6 主界面：左侧待转换文件（列表+预览），右侧可编辑 Markdown（编辑/预览）+ 导出。"""
 import os
+import time
 import tempfile
 import logging
 
@@ -22,6 +23,7 @@ from worker import OcrWorker
 from utils.input_prep import prepare_input, InputItem, InputDocument
 from utils.export_docx import md_to_docx, save_text, md_pages_to_docx
 from utils.assemble import assemble_document
+from utils.export_formats import export_html, export_json
 from utils import usage_log
 from utils.logging_setup import get_logger, log_env_on_error
 from utils.app_home import resource_path
@@ -301,6 +303,115 @@ class SettingsDialog(QDialog):
         )
         self.cfg.auto_reuse_last_success = self.auto_reuse.isChecked()
         return self.cfg
+
+
+class ExportDialog(QDialog):
+    """导出对话框：格式下拉在前、文件名随格式自动改后缀、保存/取消居中、窗口可缩放。
+
+    取代原生 QFileDialog：部分 Linux 桌面会把原生保存框弹成全屏且不可缩放，
+    过滤器在底部、按钮在右下，不符合本项目的操作习惯。本对话框固定为
+    “格式 → 文件名 → 保存位置”的自上而下顺序，初始大小约占屏幕 1/4（半宽×半高）。
+    """
+
+    # (显示标签, 扩展名)；顺序决定下拉默认项
+    FORMATS = [
+        ("Word 文档 (*.docx)", "docx"),
+        ("Markdown (*.md)", "md"),
+        ("纯文本 (*.txt)", "txt"),
+        ("HTML 网页 (*.html)", "html"),
+        ("JSON 结构化 (*.json)", "json"),
+    ]
+    _KNOWN_EXTS = {".docx", ".md", ".txt", ".html", ".htm", ".json"}
+
+    def __init__(self, base_name: str, out_dir: str, parent=None):
+        super().__init__(parent)
+        self._base = (base_name or "output").strip() or "output"
+        self.setWindowTitle("导出")
+        self.setModal(True)
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            geo = screen.availableGeometry()
+            self.resize(max(520, int(geo.width() * 0.5)),
+                        max(260, int(geo.height() * 0.5)))
+        else:
+            self.resize(560, 280)
+        self.setMinimumSize(460, 240)
+
+        form = QFormLayout()
+
+        # 1) 文件格式（在文件名之前）
+        self.format_combo = QComboBox()
+        for label, ext in self.FORMATS:
+            self.format_combo.addItem(label, ext)
+        self.format_combo.currentIndexChanged.connect(self._on_format_changed)
+        form.addRow("文件格式：", self.format_combo)
+
+        # 2) 文件名（默认 = 选中文件名 + 所选格式后缀）
+        self.name_edit = QLineEdit(self._default_name())
+        self.name_edit.textChanged.connect(self._update_preview)
+        form.addRow("文件名：", self.name_edit)
+
+        # 3) 保存位置
+        dir_row = QHBoxLayout()
+        self.dir_edit = QLineEdit(out_dir or "")
+        self.dir_edit.textChanged.connect(self._update_preview)
+        dir_row.addWidget(self.dir_edit, 1)
+        browse = QPushButton("浏览…")
+        browse.clicked.connect(self._browse_dir)
+        dir_row.addWidget(browse)
+        form.addRow("保存位置：", dir_row)
+
+        self.preview = QLabel(self.file_path())
+        self.preview.setWordWrap(True)
+        self.preview.setStyleSheet("color:#666;")
+        form.addRow("将保存到：", self.preview)
+
+        # 底部按钮居中（保存 / 取消）
+        btns = QDialogButtonBox()
+        save_btn = btns.addButton("保存", QDialogButtonBox.ButtonRole.AcceptRole)
+        btns.addButton("取消", QDialogButtonBox.ButtonRole.RejectRole)
+        save_btn.setDefault(True)
+        btns.setCenterButtons(True)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addStretch(1)
+        lay.addWidget(btns)
+
+    # ---------- helpers ----------
+    def selected_ext(self) -> str:
+        return self.format_combo.currentData() or "docx"
+
+    def _strip_known_ext(self, name: str) -> str:
+        """去掉已知扩展名，保留其余（避免把 a.b 这类文件名误截成 a）。"""
+        name = (name or "").strip()
+        root, ext = os.path.splitext(name)
+        return root if ext.lower() in self._KNOWN_EXTS else name
+
+    def _default_name(self) -> str:
+        return f"{self._base}.{self.selected_ext()}"
+
+    def _on_format_changed(self, *_):
+        """切换格式时，文件名后缀同步改变（保留用户已输入的主名）。"""
+        stem = self._strip_known_ext(self.name_edit.text()) or self._base
+        self.name_edit.setText(f"{stem}.{self.selected_ext()}")
+
+    def _browse_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "选择保存位置", self.dir_edit.text())
+        if d:
+            self.dir_edit.setText(d)
+
+    def _update_preview(self, *_):
+        self.preview.setText(self.file_path())
+
+    def file_path(self) -> str:
+        """返回最终保存路径：主名 + 所选格式扩展名（强制与格式一致）。"""
+        stem = self._strip_known_ext(self.name_edit.text()) or self._base
+        fname = f"{stem}.{self.selected_ext()}"
+        d = (self.dir_edit.text() or "").strip()
+        return os.path.join(d, fname) if d else fname
 
 
 class MainWindow(QMainWindow):
@@ -810,7 +921,9 @@ class MainWindow(QMainWindow):
 
     def _begin_convert(self, indices):
         self.progress.setVisible(True)
+        self.progress.setMaximum(len(indices))
         self.progress.setValue(0)
+        self._t_start = time.time()
         self.worker = OcrWorker(
             self.backend, self.items, self.cfg.prompt(), indices,
             as_table=(self.cfg.prompt_template == "table"),
@@ -886,8 +999,10 @@ class MainWindow(QMainWindow):
             self.open_download()
 
     def _on_progress(self, n, total, name):
+        # 进度按「已完成数」计：开始第 n 项时只显示 n-1（最后一页开始时不会提前 100%），
+        # 该项真正完成后由 _on_item_done 推进到 n。
         self.progress.setMaximum(total)
-        self.progress.setValue(n)
+        self.progress.setValue(max(0, n - 1))
         self.statusBar().showMessage(f"正在转换 第 {n}/{total} 项：{name} …")
 
     def _on_item_done(self, idx, text):
@@ -900,18 +1015,32 @@ class MainWindow(QMainWindow):
         tw = self.page_tree_items[idx] if idx < len(self.page_tree_items) else None
         if tw is not None:
             tw.setText(0, f"{self.items[idx].name}  [{self.items[idx].status}]")
+        # 该页真正完成后才推进进度条（最后一页完成时才到 100%）
+        if self.progress.isVisible():
+            self.progress.setValue(
+                min(self.progress.value() + 1, self.progress.maximum()))
 
     def _on_finished(self):
         self.progress.setVisible(False)
-        self.statusBar().showMessage(f"转换完成（共 {len(self.items)} 个图像项）")
-        _logger.info("conversion finished; total items=%d", len(self.items))
+        self.progress.setValue(self.progress.maximum())  # 收尾确保满格
+        elapsed = 0.0
+        if getattr(self, "_t_start", None):
+            elapsed = max(0.0, time.time() - self._t_start)
+
+        idxs = (list(getattr(self.worker, "indices", range(len(self.items))))
+                if self.worker else list(range(len(self.items))))
+        processed = [self.items[i] for i in idxs if 0 <= i < len(self.items)]
+        n_done = sum(1 for it in processed if it.status == "完成")
+        n_fail = sum(1 for it in processed if it.status == "失败")
+        n_total = len(processed)
+
+        self.statusBar().showMessage(
+            f"转换完成：共 {n_total} 页，用时 {elapsed:.1f} 秒")
+        _logger.info("conversion finished; total=%d done=%d fail=%d elapsed=%.1fs",
+                     n_total, n_done, n_fail, elapsed)
+
         # 记录本次作业到 usage_log.jsonl（后端 / 输出格式 / 模型参数 / 成功失败计数）
         try:
-            idxs = list(getattr(self.worker, "indices", range(len(self.items)))) if self.worker else list(range(len(self.items)))
-            processed = [self.items[i] for i in idxs if 0 <= i < len(self.items)]
-            n_done = sum(1 for it in processed if it.status == "完成")
-            n_fail = sum(1 for it in processed if it.status == "失败")
-            n_total = len(processed)
             success = (n_fail == 0 and n_done > 0)
             mp = self.cfg.model_params
             usage_log.record({
@@ -944,14 +1073,44 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        # 完成提示：只有“确认（OK）”按钮
+        msg = f"转换完成。共转换 {n_total} 页，用时 {elapsed:.1f} 秒。"
+        if n_fail:
+            msg += f"\n\n其中 {n_fail} 页转换失败，可在左侧列表中查看状态。"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("转换完成")
+        box.setText(msg)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.exec()
+
     # ---------- 导出（按选择，单一按钮）----------
+    def _ask_export_path(self, base, out_dir):
+        """弹出导出对话框；返回 (最终路径, 格式扩展名)，取消返回 (None, None)。
+
+        独立成方法便于测试替换（避免在 headless 下真弹模态框）。
+        """
+        dlg = ExportDialog(base, out_dir, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None, None
+        path = dlg.file_path()
+        d = os.path.dirname(path)
+        if d:
+            try:
+                os.makedirs(d, exist_ok=True)
+            except Exception:
+                pass
+        return path, dlg.selected_ext()
+
     def export_selected(self):
         """导出（按当前树选择）：
 
         - 选中一级目录（顶层文档） -> 导出该文档全部页（装配成一个文件）；
         - 选中二级页面（1 个或多个，需同属一个文档） -> 导出这些页组成的文档；
         - 跨文档多选二级页 -> 拒绝。
-        格式：docx 在页间插入真实分页符；md/txt 用分隔线/页码标记。
+        格式（5 种，与 pic2edit-ocr skill 对齐）：docx 在页间插入真实分页符；
+        md/txt 用分隔线/页码标记；html 还原为可打开网页；json 输出结构化逐页文本。
+        默认文件名按所选类型自动补扩展名（用户已手动输入扩展名则尊重之）。
 
         未显式多选时，以当前聚焦项为准：聚焦顶层文档=整文档，聚焦某页=该页。
         """
@@ -998,21 +1157,22 @@ class MainWindow(QMainWindow):
         out_dir = self.cfg.output_dir or os.path.dirname(doc.source_path)
         os.makedirs(out_dir, exist_ok=True)
         base = os.path.splitext(os.path.basename(doc.source_path))[0]
-        path, _ = QFileDialog.getSaveFileName(
-            self, "导出", os.path.join(out_dir, base),
-            "Word 文档 (*.docx);;Markdown (*.md);;文本 (*.txt)"
-        )
+        path, _ext = self._ask_export_path(base, out_dir)
         if not path:
             self.statusBar().showMessage("已取消导出")
             return
         self.statusBar().showMessage(f"正在导出：{os.path.basename(path)} …")
         try:
-            if path.lower().endswith(".docx"):
+            if _ext == "docx":
                 md_pages_to_docx(texts, path)   # 每页之间插入真实分页符
-            else:
+            elif _ext == "html":
+                export_html(pages, path)
+            elif _ext == "json":
+                export_json(pages, doc.source_path, path)
+            else:  # md / txt
                 save_text(assemble_document(texts), path)
             self.statusBar().showMessage(f"导出成功：{path}")
-            _logger.info("exported: %s (%d pages)", path, len(pages))
+            _logger.info("exported: %s (%d pages, format=%s)", path, len(pages), _ext)
             QMessageBox.information(self, "导出成功", f"已保存到：{path}")
         except Exception as e:
             self.statusBar().showMessage(f"导出失败：{e}")
