@@ -6,12 +6,12 @@
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 # 页面类型：对应输出格式 / 输入形态
-# markdown: 普通文本页；table: 表格页；figure: 图表/公式页；html_table: HTML 表格；
-# handwrite: 手写体页（预筛命中）。
-_PAGE_TYPES = {"markdown", "table", "figure", "html_table", "handwrite"}
+# markdown: 普通文本页；table: 表格页；figure: 图表/公式页；html_table: HTML 表格。
+_PAGE_TYPES = {"markdown", "table", "figure", "html_table"}
 
 # 这些页面类型下 RapidOCR 会压平或漏识别（表格被压平、图/公式无法识别），
 # 应跳过判别式、直接走 VLM 原生输出。
@@ -51,3 +51,25 @@ class RoutingPolicy:
         )
         guard = page_type not in _NO_GUARD_PAGE_TYPES
         return cls(skip_discriminative=skip, guard_hallucination=guard)
+
+
+def vmem_limited_gb() -> float:
+    """返回本进程虚拟内存软限制（GB）；无限制 / 不可用返回 0。
+
+    沙箱检测：WorkBuddy 沙箱 ``ulimit -v=4GB`` 会让 onnxruntime 加载模型时
+    被 OOM killer 连父进程一起 SIGKILL(137)。``<=6GB`` 视为受限，应跳过判别式。
+    GUI 与 Skill 共用此实现，确保两侧在受限环境下路由一致。
+    """
+    try:
+        import resource as _rs
+        soft, _ = _rs.getrlimit(_rs.RLIMIT_AS)
+    except Exception:
+        return 0.0
+    if soft == _rs.RLIM_INFINITY:
+        return 0.0
+    return soft / (1024 ** 3)
+
+
+def env_force_skip() -> bool:
+    """环境变量 ``PIC2EDIT_SKIP_DISCRIMINATIVE=1/true/yes`` 强制跳过判别式。"""
+    return os.environ.get("PIC2EDIT_SKIP_DISCRIMINATIVE", "").lower() in ("1", "true", "yes")

@@ -17,7 +17,7 @@ import markdown
 
 from config import Config, RESOLUTION_MODES, PROMPT_LABELS, ModelParams, MODEL_PARAM_PRESETS
 from backend_api import OllamaBackend, TransformersBackend, LlamaCppBackend
-from backends.server_launcher import ServerStarter
+from backend_api import ServerStarter
 from worker import OcrWorker
 from utils.input_prep import prepare_input, InputItem, InputDocument
 from utils.export_docx import md_to_docx, save_text, md_pages_to_docx

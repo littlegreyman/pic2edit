@@ -5,7 +5,7 @@ from backend_api import OCRBackend
 from utils.input_prep import InputItem
 from utils.logging_setup import get_logger, log_exception
 from utils.table_utils import kv_text_to_markdown_table
-from backend_api import run as pipeline_run, RoutingPolicy
+from backend_api import run as pipeline_run, RoutingPolicy, vmem_limited_gb, env_force_skip
 
 _logger = get_logger("worker")
 
@@ -33,8 +33,14 @@ class OcrWorker(QThread):
         # - 图表/公式模式下关闭英文 boilerplate 幻觉守卫（公式/化学符号等含拉丁字符属正常）。
         # 路由策略收敛到共享内核 RoutingPolicy：页面类型决定「是否跳过判别式」
         # 与「是否启用幻觉守卫」，GUI 与 Skill 共用同一套规则（修复两侧路由不一致）。
+        # 路由入参与 Skill 对齐：除页面类型外，统一注入运行环境信息（虚拟内存软限制、
+        # 强制跳过环境变量），确保沙箱/受限环境下两侧路由一致。
+        # hw_detected：GUI 当前未做手写体预筛（属 Phase 3.2 后端能力下沉），传 False 等价原行为。
         self.policy = RoutingPolicy.for_page_type(
             "table" if as_table else prompt_template,
+            force_skip=env_force_skip(),
+            vmem_limited_gb=vmem_limited_gb(),
+            hw_detected=False,
         )
 
     def run(self):

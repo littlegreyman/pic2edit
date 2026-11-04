@@ -111,10 +111,15 @@ if OCR_APP not in sys.path:
 from utils.input_prep import prepare_input                      # noqa: E402
 from utils.export_docx import save_text, md_to_docx              # noqa: E402
 from utils.table_utils import kv_text_to_markdown_table         # noqa: E402
-from backends.llamacpp_backend import LlamaCppBackend           # noqa: E402
-from backends.discriminative_backend import DiscriminativeBackend  # noqa: E402
-from backends.ocr_pipeline import run as pipeline_run
-from backends.routing import RoutingPolicy                          # noqa: E402               # noqa: E402
+from backend_api import (  # noqa: E402
+    LlamaCppBackend,
+    DiscriminativeBackend,
+    pipeline_run,
+    RoutingPolicy,
+    EngineLauncher,
+    vmem_limited_gb,
+    env_force_skip,
+)
 import run_llamacpp_server as launcher                           # noqa: E402
 
 # 发票经典版式还原（schema 驱动，纯 stdlib，无 pic2edit 依赖）
@@ -208,24 +213,13 @@ class _VlmProbe:
 
 def _table_available():
     try:
-        from backends.table_backend import TableRecognizer
+        from backend_api import TableRecognizer
         tr = TableRecognizer()
         return bool(tr.available())
     except Exception:
         return False
 
 
-def _vmem_limited_gb():
-    # `resource` 是 Unix 专属模块；Windows 上不可用，按「无虚拟内存限制」处理
-    # （即不自动跳过判别式，由后续逻辑按可用性决定）。
-    try:
-        import resource as _rs
-        soft, _ = _rs.getrlimit(_rs.RLIMIT_AS)
-    except Exception:
-        return 0
-    if soft == _rs.RLIM_INFINITY:
-        return 0
-    return soft / (1024 ** 3)
 
 
 def ensure_server(url, gpu_layers, model_files=None):
@@ -261,8 +255,11 @@ def ensure_server(url, gpu_layers, model_files=None):
     if gpu_layers is not None:
         cmd += ["--n-gpu-layers", str(gpu_layers)]
     print(f"[launch] {' '.join(cmd)}", file=sys.stderr)
-    proc = subprocess.Popen(cmd, cwd=OCR_APP,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    # 用 EngineLauncher 拉起：置于独立进程组，关停时可整组回收，
+    # 消除 llama-server worker 子进程变孤儿持续占显存的隐患（等价原 Popen，仅更稳健）。
+    _el = EngineLauncher()
+    proc = _el.start(cmd, cwd=OCR_APP,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     deadline = time.time() + READY_TIMEOUT
     while time.time() < deadline:
         if proc.poll() is not None:
@@ -2291,12 +2288,12 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
     # RapidOCR/onnxruntime 加载模型会被 OOM killer 连父进程一起 SIGKILL(137)。
     # 此时跳过判别式，直接走 VLM 兜底（依赖本机 :8080 的 llama-server）。
     # 也可用环境变量 PIC2EDIT_SKIP_DISCRIMINATIVE=1 强制跳过。
-    _force = os.environ.get("PIC2EDIT_SKIP_DISCRIMINATIVE", "").lower() in ("1", "true", "yes")
+    _force = env_force_skip()
     # 统一路由策略收敛到 ocr_app RoutingPolicy：页面类型(table/figure/html_table) + 手写预筛
     # + 沙箱内存受限 + 强制跳过，均跳过判别式直走 VLM 兜底；图表模式关闭幻觉守卫。
     # 与 GUI 使用同一套规则，避免两侧行为不一致（如防伪底纹发票 GUI 缺逃生口）。
     _policy = RoutingPolicy.for_page_type(
-        mode, force_skip=_force, hw_detected=_hw, vmem_limited_gb=_vmem_limited_gb(),
+        mode, force_skip=_force, hw_detected=_hw, vmem_limited_gb=vmem_limited_gb(),
     )
     skip_disc = _policy.skip_discriminative
     if skip_disc:
@@ -2348,23 +2345,15 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
                 items.extend(d.pages)
             else:
                 items.append(d)
-        if not disc_ok:
-            # 服务已就绪：用探针包装 VLM 后端，记录哪些页走了 VLM，得到逐页溯源。
-            # 注意：必须按 skip_disc 透传 skip_discriminative，绝不能硬编码 False——
-            # 否则即便用户用 PIC2EDIT_SKIP_DISCRIMINATIVE=1 强制跳过判别式，
-            # 流水线仍会先跑 RapidOCR，而 RapidOCR 在复杂底纹发票上返回非空噪声，
-            # 导致 _quality_ok 通过、VLM 兜底被门控掉、DeepSeek-OCR 根本没被调用。
-            probe = _VlmProbe(url, "deepseek-ocr")
-            pipeline_run(items, vlm_backend=probe, server_url=url, model="deepseek-ocr",
-                         use_vlm_fallback=True, mode=mode, policy=_policy)
-            vlm_probe = probe.called
-        else:
-            # disc 可用分支也用探针包装 VLM 后端：确保「判别式为主 + VLM 兜底」时，
-            # 若内部真触发了兜底调用，也能被溯源标记（修复原 disc_ok 分支的虚假溯源）。
-            probe = _VlmProbe(url, "deepseek-ocr")
-            pipeline_run(items, vlm_backend=probe, server_url=url, model="deepseek-ocr",
-                         use_vlm_fallback=True, mode=mode, policy=_policy)
-            vlm_probe = probe.called
+        # 用探针包装 VLM 后端，记录哪些页走了 VLM，得到逐页溯源。
+        # 注意：必须按 skip_disc 透传 policy（含 skip_discriminative），绝不能硬编码 False——
+        # 否则即便用户用 PIC2EDIT_SKIP_DISCRIMINATIVE=1 强制跳过判别式，
+        # 流水线仍会先跑 RapidOCR，而 RapidOCR 在复杂底纹发票上返回非空噪声，
+        # 导致 _quality_ok 通过、VLM 兜底被门控掉、DeepSeek-OCR 根本没被调用。
+        probe = _VlmProbe(url, "deepseek-ocr")
+        pipeline_run(items, vlm_backend=probe, server_url=url, model="deepseek-ocr",
+                     use_vlm_fallback=True, mode=mode, policy=_policy)
+        vlm_probe = probe.called
         # 先快照原始 OCR 文本：kv 后处理会改写 it.result，需在此之前保留“完整原文”
         # 全文重复护栏：VLM/判别式偶发「整段循环重复」（如重庆票样），截断后再入库，
         # 避免噪声污染。pic2edit 自带 trim 仅处理尾部，这里补全文检测。
@@ -2428,11 +2417,14 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
             sys.stderr.write(f"[schema] {schema_hits}/{len(pages)} 页命中凭证 schema（发票）\n")
     finally:
         if proc is not None and stop_server:
-            proc.terminate()
+            # 经 EngineLauncher 整组回收（POSIX killpg / Windows CTRL_BREAK_EVENT），
+            # 避免只杀直接子进程而留下 llama-server worker 孤儿；等价原 terminate+wait+kill。
+            _el = EngineLauncher()
+            _el.stop(proc)
             try:
                 proc.wait(timeout=5)
             except Exception:
-                proc.kill()
+                _el.kill(proc)
 
     data = {"source": os.path.abspath(input_path),
             "vlm_fallback_invoked": bool(vlm_probe),

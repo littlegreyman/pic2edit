@@ -9,7 +9,6 @@ import os
 import sys
 import time
 import threading
-import subprocess
 import urllib.request
 
 from PySide6.QtCore import QThread, Signal
@@ -64,18 +63,6 @@ class ServerStarter(QThread):
             return
         self._done.set()
         self.failed.emit(msg)
-
-    def _popen_kwargs(self):
-        kwargs = dict(
-            cwd=OCR_APP_DIR,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        if os.name == "nt":  # 不弹额外控制台窗口，且避免被 cmd 包裹
-            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        return kwargs
 
     def _start_llamacpp(self):
         try:
