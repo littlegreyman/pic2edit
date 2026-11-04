@@ -223,9 +223,8 @@ class DiscriminativeBackend:
             return None
         return _lines_from_output(result, image_path)
 
-    def ocr_image(self, image_path, prompt=None) -> str:
-        """返回 Markdown 文本（阅读顺序拼接，已剔除页眉/页脚/页码）。识别失败返回空串。"""
-        data = self._raw(image_path)
+    def _assemble(self, data) -> str:
+        """把 _raw 结果装配为 Markdown 文本（已剔除页眉/页脚/页码）。"""
         if not data or "error" in data:
             return ""
         lines = data.get("lines") or []
@@ -242,3 +241,23 @@ class DiscriminativeBackend:
                 continue
             keep.append(ln)
         return assemble_markdown(keep, H)
+
+    def ocr_image(self, image_path, prompt=None) -> str:
+        """返回 Markdown 文本（阅读顺序拼接，已剔除页眉/页脚/页码）。识别失败返回空串。"""
+        return self._assemble(self._raw(image_path))
+
+    def ocr_image_with_lines(self, image_path, prompt=None):
+        """一次 OCR 同时返回 (Markdown, 原始行框数据)。
+
+        raw 数据含 ``lines/img_w/img_h``（原始坐标，未剔除页眉页脚），供表格/版面重建
+        使用，避免为拿坐标再跑一次 OCR。识别失败时文本为 ""、data 为 {}。
+        """
+        data = self._raw(image_path) or {}
+        return self._assemble(data), data
+
+    def ocr_lines(self, image_path):
+        """只取带坐标的原始行框（表格重建用）；失败返回 None。"""
+        data = self._raw(image_path)
+        if not data or "error" in data:
+            return None
+        return data

@@ -163,7 +163,17 @@ def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deep
             # 单张坏图/异常不应炸掉整个批次：捕获后保留已有结果（表格识别），
             # 交由后续 VLM 兜底；若仍无结果则本页留空而非中断其它页。
             try:
-                disc_md = disc.ocr_image(it.image_path)
+                # 优先用「文本+坐标」一次返回，顺带把行框挂到 item 上，
+                # 供 GUI 的两栏/表格版面重建使用（不额外跑一次 OCR）。
+                with_lines = getattr(disc, "ocr_image_with_lines", None)
+                if with_lines is not None:
+                    disc_md, disc_data = with_lines(it.image_path)
+                    if disc_data:
+                        it.lines = disc_data.get("lines") or None
+                        it.img_w = disc_data.get("img_w") or 0
+                        it.img_h = disc_data.get("img_h") or 0
+                else:
+                    disc_md = disc.ocr_image(it.image_path)
                 if disc_md:
                     md = disc_md
                     source = "disc"

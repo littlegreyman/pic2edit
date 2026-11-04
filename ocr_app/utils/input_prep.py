@@ -33,6 +33,10 @@ class InputItem:
         self.source = source      # 原始文件
         self.result = ""          # OCR 结果（Markdown）
         self.status = "待转换"     # 待转换 / 转换中 / 完成 / 失败
+        # 带坐标的 OCR 行框（判别式/表格重建用；未运行判别式时为空）
+        self.lines = None         # [{"text","x0","x1","y0","y1"}, ...]
+        self.img_w = 0
+        self.img_h = 0
 
 
 @dataclass
