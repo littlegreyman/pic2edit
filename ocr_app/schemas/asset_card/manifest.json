@@ -1,0 +1,10 @@
+{
+  "id": "asset_card",
+  "title": "固定资产卡片",
+  "version": "1.0.0",
+  "kind": "builtin",
+  "priority": 20,
+  "schema": "schema.yaml",
+  "layout": "layout.html",
+  "description": "声明式 schema 的完整示例：零 Python，只有这份 yaml 与一份 layout.html。字段依据《注册会计师审计数据规范 固定资产》（T/CICPA 0110—2026）固定资产卡片表的常见项取舍。"
+}

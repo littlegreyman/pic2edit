@@ -1,0 +1,84 @@
+<!--
+  固定资产卡片 · 版式模板
+
+  只用两种语法，刻意不做成模板语言：
+    {{ 字段 }}                取 schema 里抽出的值（自动 HTML 转义）
+    <tr data-repeat="分段key"> 该行按表格数据重复，内部占位按"行"取值
+
+  <style> 里的内容会被 css() 抽出、拼进导出 HTML 的 <style>，
+  所以这里不要写 <html>/<head>/<body>，只写"这一段长什么样"。
+-->
+<style>
+.asset-card { border: 1px solid #d8cba8; border-radius: 6px; padding: 14px 16px;
+  font-size: 12px; color: #222; background: #fffef9; }
+.asset-card > h2 { margin: 0 0 12px; font-size: 16px; text-align: center;
+  letter-spacing: 4px; color: #8a6d1f; }
+.asset-card > h3 { margin: 16px 0 6px; font-size: 13px; color: #6b5416;
+  border-left: 3px solid #c9a227; padding-left: 7px; }
+.asset-kv { border-collapse: collapse; width: 100%; }
+.asset-kv td { border: 1px solid #e2d9c0; padding: 4px 8px; vertical-align: top; }
+.asset-kv td.k { background: #faf6ea; color: #6b5b33; width: 15%; white-space: nowrap; }
+.asset-kv td.v { width: 35%; }
+.asset-table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+.asset-table th { background: #f4eeda; border: 1px solid #e2d9c0; padding: 4px 6px; font-weight: 600; }
+.asset-table td { border: 1px solid #e2d9c0; padding: 3px 6px; text-align: right; }
+.asset-table td:first-child { text-align: left; }
+.asset-note { margin: 0; padding: 6px 8px; background: #faf6ea; border: 1px dashed #e2d9c0;
+  color: #555; min-height: 1.4em; }
+.asset-card .empty { color: #b0a68c; }
+</style>
+<div class="asset-card">
+  <h2>固定资产卡片</h2>
+
+  <table class="asset-kv">
+    <tr>
+      <td class="k">卡片编号</td><td class="v">{{ card_no }}</td>
+      <td class="k">资产编号</td><td class="v">{{ asset_no }}</td>
+    </tr>
+    <tr>
+      <td class="k">资产名称</td><td class="v">{{ name }}</td>
+      <td class="k">资产类别</td><td class="v">{{ category }}</td>
+    </tr>
+    <tr>
+      <td class="k">规格型号</td><td class="v">{{ spec }}</td>
+      <td class="k">使用部门</td><td class="v">{{ use_dept }}</td>
+    </tr>
+    <tr>
+      <td class="k">存放地点</td><td class="v">{{ location }}</td>
+      <td class="k">开始使用日期</td><td class="v">{{ start_date }}</td>
+    </tr>
+    <tr>
+      <td class="k">原值</td><td class="v">{{ original_cost }}</td>
+      <td class="k">净值</td><td class="v">{{ net_value }}</td>
+    </tr>
+    <tr>
+      <td class="k">折旧方法</td><td class="v">{{ depreciation_method }}</td>
+      <td class="k">预计使用年限</td><td class="v">{{ useful_life }}</td>
+    </tr>
+    <tr>
+      <td class="k">残值率</td><td class="v">{{ residual_rate }}</td>
+      <td class="k"></td><td class="v"></td>
+    </tr>
+  </table>
+
+  <h3>二、折旧明细</h3>
+  <table class="asset-table">
+    <thead>
+      <tr>
+        <th>期间</th><th>月数</th><th>本期折旧</th><th>累计折旧</th><th>净值</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr data-repeat="depreciation">
+        <td>{{ period }}</td>
+        <td>{{ months }}</td>
+        <td>{{ amount }}</td>
+        <td>{{ accumulated }}</td>
+        <td>{{ net_value }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>三、备注</h3>
+  <p class="asset-note">{{ remarks }}</p>
+</div>

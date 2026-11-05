@@ -8,6 +8,7 @@ Pillow>=10.0
 requests>=2.31
 markdown>=3.5
 python-docx>=1.1
+PyYAML>=6.0             # 声明式 schema（schemas/runtime.py）的唯一新增依赖；纯解析，不做模板
 huggingface_hub>=0.23   # used by download_models.bat to pull GGUF models
 rapidocr>=3.10.0        # 判别式 OCR 引擎（零幻觉，支持 Python 3.14）
 onnxruntime>=1.31       # RapidOCR 的 ONNX 推理运行时（CPU；GPU 用户可换 onnxruntime-gpu）

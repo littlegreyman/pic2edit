@@ -1,0 +1,117 @@
+# 固定资产卡片 —— 声明式 schema 参考实现
+#
+# 这份文件是「新增一种凭证要做什么」的答案：只有这个 yaml + 一个 layout.html，
+# 没有一行 Python。运行时在 ../runtime.py，它不认识"固定资产"这四个字。
+#
+# 字段取舍参考《注册会计师审计数据规范 固定资产》（T/CICPA 0110—2026）中
+# 固定资产卡片表的常用项；这里刻意只保留票面上真实能看见的字段——schema 里
+# 放一堆票面没有的字段，只会让"必填缺失"变成常态。
+id: asset_card
+title: 固定资产卡片
+version: 1.0.0
+# 小于发票的 100：更具体的类型先试。发票的 detect 恒真（它靠 extract 判定），
+# 若不把本类型排在前面，auto 模式下会把每一页都判成发票。
+priority: 20
+
+# detect 只回答"像不像我"。任何一个关键词命中即候选，
+# all 里的词必须同时出现（这里用"资产编号"做二次确认，避免"固定资产"这个词
+# 出现在审计报告正文里就被误判成卡片）。
+detect:
+  any:
+    - 固定资产卡片
+    - 资产卡片
+    - 卡片编号
+  all:
+    - 资产编号
+  none:
+    - 增值税
+    - 发票代码
+
+# strict: true 时，任何 required 字段取不到值即视为整页未命中。
+# 这是有意的保守：宁可回退到通用渲染，也不输出一张字段残缺却看似可信的表。
+strict: true
+
+sections:
+  - key: header
+    label: 一、基本信息
+    mode: kv
+    fields:
+      - key: card_no
+        label: 卡片编号
+        regex: '卡片编号[：:\s]*([A-Za-z0-9\-_/]+)'
+        anchor: right
+        required: true
+
+      - key: asset_no
+        label: 资产编号
+        regex: '资产编号[：:\s]*([A-Za-z0-9\-_/]+)'
+        anchor: right
+        required: true
+
+      - key: name
+        label: 资产名称
+        anchor: right
+        required: true
+
+      - key: category
+        label: 资产类别
+        anchor: right
+
+      - key: spec
+        label: 规格型号
+        anchor: right
+
+      - key: use_dept
+        label: 使用部门
+        anchor: right
+
+      - key: location
+        label: 存放地点
+        anchor: right
+
+      - key: start_date
+        label: 开始使用日期
+        regex: '(?:开始使用日期|启用日期)[：:\s]*(\d{4}[-年/]\d{1,2}[-月/]\d{1,2}日?)'
+        anchor: right
+
+      - key: original_cost
+        label: 原值
+        anchor: right
+
+      - key: net_value
+        label: 净值
+        anchor: right
+
+      - key: depreciation_method
+        label: 折旧方法
+        anchor: right
+
+      - key: useful_life
+        label: 预计使用年限
+        anchor: right
+
+      - key: residual_rate
+        label: 残值率
+        anchor: right
+
+  # 表格分段：有坐标时按 y 聚行、行内按 x 排序；无坐标时按 2+ 空白切列。
+  # 列按声明顺序左→右对应，因此列的顺序必须与票面一致——这是声明式的代价，
+  # 换来的是不必为每种版式写抽取代码。
+  - key: depreciation
+    label: 二、折旧明细
+    mode: table
+    required: false
+    # 表格的边界必须显式声明：不声明 start，上半部分的键值行会被当成两列数据行。
+    start: 折旧明细
+    stop: 合计
+    columns:
+      - {key: period, label: 期间}
+      - {key: months, label: 月数}
+      - {key: amount, label: 本期折旧}
+      - {key: accumulated, label: 累计折旧}
+      - {key: net_value, label: 净值}
+
+  - key: remarks
+    label: 三、备注
+    mode: text
+    regex: '备注[：:]\s*(.+)'
