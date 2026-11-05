@@ -110,11 +110,8 @@ OCR_APP = _find_ocr_app()
 if OCR_APP not in sys.path:
     sys.path.insert(0, OCR_APP)
 
-from utils.input_prep import prepare_input                      # noqa: E402
-from utils.export_docx import save_text, md_to_docx              # noqa: E402
-from utils.table_utils import kv_text_to_markdown_table         # noqa: E402
-# 与 GUI 同源的坐标表格重建（两门户共用一套逻辑，避免 md 表格能力漂移）
-from utils.table_layout import build_table_from_lines            # noqa: E402
+# 只经共享内核门面访问后端能力（Phase 2.1）：不再直连 utils.* / backends.* /
+# run_llamacpp_server 等内部模块，内部签名变化由契约测试拦截，而非运行期静默断。
 from backend_api import (  # noqa: E402
     LlamaCppBackend,
     DiscriminativeBackend,
@@ -123,8 +120,14 @@ from backend_api import (  # noqa: E402
     EngineLauncher,
     vmem_limited_gb,
     env_force_skip,
+    prepare_input,
+    save_text,
+    md_to_docx,
+    kv_text_to_markdown_table,
+    build_table_from_lines,
+    discover_engine,
+    build_engine_command,
 )
-import run_llamacpp_server as launcher                           # noqa: E402
 
 # 发票经典版式还原（schema 驱动，纯 stdlib，无 pic2edit 依赖）
 from invoice_render import (  # noqa: E402
@@ -242,7 +245,7 @@ def ensure_server(url, gpu_layers, model_files=None):
         # 已有服务在跑：无法确认它加载的是哪个量化，提示一句便于排查精度差异
         sys.stderr.write("[model] 检测到已有服务在运行，沿用其已加载的模型（本次不切换）\n")
         return backend, None
-    exe, model, mmproj = launcher.discover()
+    exe, model, mmproj = discover_engine()
     if model_files:
         _m, _mp = model_files
         if _m:
@@ -255,7 +258,7 @@ def ensure_server(url, gpu_layers, model_files=None):
     if not model:
         sys.stderr.write("[error] 未找到 GGUF 模型，请先下载模型权重。\n")
         sys.exit(1)
-    cmd = launcher.build_command(exe, model, mmproj)
+    cmd = build_engine_command(exe, model, mmproj)
     if gpu_layers is not None:
         cmd += ["--n-gpu-layers", str(gpu_layers)]
     print(f"[launch] {' '.join(cmd)}", file=sys.stderr)
@@ -274,6 +277,16 @@ def ensure_server(url, gpu_layers, model_files=None):
             return backend, proc
         time.sleep(2)
     sys.stderr.write("[error] 引擎在超时内未就绪（检查 CUDA / 模型路径）\n")
+    # 「自拉起则负责关停」必须覆盖超时退出路径：此处 proc 尚未返回给调用方，
+    # 调用方的 finally 拿不到它（proc 仍为 None），不在这里回收就会留下常驻引擎占显存。
+    try:
+        _el.stop(proc)
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            _el.kill(proc)
+    except Exception:
+        pass
     sys.exit(1)
 
 
@@ -1964,7 +1977,7 @@ def _build_page_table(cells, W, H):
     天然抑制旧逻辑里 colspan=3 之类的过度合并。
 
     Markdown 表格**不走本函数**，统一由 ``_layout_table_md`` 调共享
-    ``utils/table_layout.build_table_from_lines``（与 GUI 同源）。原先的
+    ``backend_api.build_table_from_lines``（与 GUI 同源，内核 utils/table_layout）。原先的
     ``as_html=False`` 平铺分支既无调用方（死代码），产出的行也缺 ``| --- |``
     分隔行（多数渲染器不成表），已删除。
     """
@@ -2080,7 +2093,7 @@ def _layout_table_md(p):
     """用**共享** table_layout 把带坐标的页面还原成 Markdown 表格（与 GUI 同源）。
 
     为什么要共享而不是在 skill 里再写一套：GUI 的表格能力来自
-    ``ocr_app/utils/table_layout.build_table_from_lines``（中部 gutter 优先切两栏 +
+    ``backend_api.build_table_from_lines``（内核实现 ocr_app/utils/table_layout，中部 gutter 优先切两栏 +
     端点聚类回退，产出带 ``| --- |`` 分隔行的合法 md 表）。skill 此前只有 ``html``
     走坐标重建，md/txt/docx 直接吐原始 OCR 文本，于是"两栏对照表"在 md 里排不出表——
     同一份输入，GUI 出表、skill 不出表。这里直接复用它，从此两侧同源。

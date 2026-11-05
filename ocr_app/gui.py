@@ -18,7 +18,7 @@ import markdown
 
 from config import Config, RESOLUTION_MODES, PROMPT_LABELS, ModelParams, MODEL_PARAM_PRESETS
 from backend_api import OllamaBackend, TransformersBackend, LlamaCppBackend
-from backend_api import ServerStarter
+from backend_api import ServerStarter, EngineLauncher
 from worker import OcrWorker
 from utils.input_prep import prepare_input, InputItem, InputDocument
 from utils.export_docx import md_to_docx, save_text, md_pages_to_docx
@@ -1245,15 +1245,20 @@ class MainWindow(QMainWindow):
         # 关闭窗口时一并终止，避免残留进程占用显存。
         # 注意：_server_proc 仅在自动启动“成功”后才被赋值；若启动“失败/仍在进行中”时关闭窗口，
         # 进程由 ServerStarter._proc 持有，故这里两者都要清理，否则会留下孤儿进程持续占显存。
+        #
+        # 必须经 EngineLauncher 整组回收：直接 proc.terminate() 只杀 leader，llama-server
+        # 派生的 worker 会变孤儿继续占显存；且 leader 一旦退出，后续 EngineLauncher.stop()
+        # 会因 poll() 非 None 提前返回，等于把整组回收彻底废掉。
         proc = getattr(self, "_server_proc", None)
         if proc is not None:
             try:
                 if proc.poll() is None:
-                    proc.terminate()
+                    _el = EngineLauncher()
+                    _el.stop(proc)
                     try:
                         proc.wait(timeout=5)
                     except Exception:
-                        proc.kill()
+                        _el.kill(proc)
             except Exception:
                 pass
         starter = getattr(self, "_server_starter", None)

@@ -38,9 +38,56 @@ def test_facade_surface_for_skill():
         "run", "pipeline_run", "RoutingPolicy", "EngineLauncher", "ServerStarter",
         "create_backend", "vmem_limited_gb", "env_force_skip",
         "LlamaCppBackend", "DiscriminativeBackend", "TableRecognizer",
+        # 2.1 收口后新增：输入适配 / 导出 / 表格 / 引擎 CLI 也必须经门面
+        "prepare_input", "InputItem", "InputDocument",
+        "save_text", "md_to_docx", "md_pages_to_docx",
+        "kv_text_to_markdown_table", "build_table_from_lines",
+        "discover_engine", "build_engine_command",
     ]
     missing = [n for n in needed if not hasattr(api, n)]
     assert not missing, f"门面缺少 Skill 依赖的符号: {missing}"
+
+
+def _skill_script_path():
+    here = os.path.dirname(os.path.abspath(__file__))
+    for p in (
+        os.path.join(here, "..", ".workbuddy", "skills", "pic2edit-ocr", "scripts",
+                     "pic2edit_convert.py"),
+        os.path.expanduser("~/.workbuddy/skills/pic2edit-ocr/scripts/pic2edit_convert.py"),
+    ):
+        p = os.path.abspath(p)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def test_skill_imports_only_facade():
+    """Phase 2.1 门禁：skill 不得直连任何内核内部模块（utils.* / backends.* / 引擎 CLI）。
+
+    这条是**静态**检查——它拦的是"未来有人图省事又写一句 from utils.xxx import"，
+    而不是运行期行为；只要出现就失败，逼着把能力补到 backend_api。
+    """
+    import re
+
+    script = _skill_script_path()
+    if script is None:
+        import pytest
+        pytest.skip("未找到 skill 脚本，跳过门面边界检查")
+
+    with open(script, encoding="utf-8") as f:
+        src = f.read()
+
+    # 允许 import 的：backend_api（门面）+ skill 自带模块 + 标准库/第三方。
+    # 禁止：内核内部模块前缀。
+    forbidden = re.findall(
+        r"^\s*(?:from|import)\s+((?:utils|backends)(?:\.\w+)*|run_llamacpp_server|"
+        r"worker|gui|config)\b",
+        src,
+        re.MULTILINE,
+    )
+    assert not forbidden, (
+        "skill 仍直连内核内部模块，应改经 backend_api 门面：" f"{sorted(set(forbidden))}"
+    )
 
 
 def test_create_backend_factories():
@@ -105,6 +152,60 @@ def test_engine_launcher_stop_kills_whole_group():
             el.kill(proc)
         except Exception:
             pass
+
+
+class _FakeProc:
+    """最简 Popen 替身：只需 poll()/wait() 供 closeEvent 使用。"""
+
+    def __init__(self, alive=True):
+        self._alive = alive
+
+    def poll(self):
+        return None if self._alive else 0
+
+    def wait(self, timeout=None):
+        self._alive = False
+        return 0
+
+
+def test_gui_close_uses_process_group_stop(monkeypatch):
+    """关窗必须经 EngineLauncher 整组回收，不得裸 proc.terminate()。
+
+    回归背景：closeEvent 曾先 ``proc.terminate()`` 只杀 leader，leader 退出后
+    ``EngineLauncher.stop()`` 会因 ``poll()`` 非 None 提前返回，整组回收彻底失效，
+    llama-server 的 worker 变孤儿继续占显存——正是 2.2 要消灭的问题。
+    """
+    import gui
+
+    calls = []
+
+    class _FakeLauncher:
+        def stop(self, proc=None):
+            calls.append(("stop", proc))
+
+        def kill(self, proc=None):
+            calls.append(("kill", proc))
+
+    monkeypatch.setattr(gui, "EngineLauncher", _FakeLauncher)
+
+    class _Evt:
+        accepted = False
+
+        def accept(self):
+            self.accepted = True
+
+    proc = _FakeProc(alive=True)
+
+    class _Stub:
+        _server_proc = proc
+        _server_starter = None
+        work_dir = tempfile.mkdtemp()
+
+    evt = _Evt()
+    gui.MainWindow.closeEvent(_Stub(), evt)
+
+    assert ("stop", proc) in calls, "关窗必须调用 EngineLauncher.stop 做进程组回收"
+    assert evt.accepted, "事件必须被接受（否则窗口关不掉）"
 
 
 def test_gui_skill_routing_parity_in_sandbox():
