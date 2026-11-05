@@ -109,3 +109,61 @@ def test_docx_contains_real_word_table(skill, tmp_path):
     tb = doc.tables[0]
     assert len(tb.columns) == 2
     assert tb.rows[0].cells[0].text.strip() == "左0"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.2：schema 三态在 skill 渲染链路里的表现
+# ---------------------------------------------------------------------------
+def _invoice_data():
+    from testdata import invoice_sample
+
+    page = invoice_sample.page()
+    page["engine"] = "disc"
+    return {"pages": [page]}
+
+
+def test_md_uses_schema_when_hit(skill, tmp_path):
+    """命中发票 schema → md 必须按字段输出，而不是把 OCR 文本原样吐出来。"""
+    from schemas import apply_schemas
+
+    data = _invoice_data()
+    apply_schemas(data["pages"], "auto")
+    out = skill._render(data, "md", str(tmp_path / "inv.md"), "in.pdf", False, "markdown")
+    text = open(out, encoding="utf-8").read()
+
+    assert "北京星辰科技有限公司" in text
+    assert "[购买方]" in text or "购买方" in text
+    assert "壹万零陆佰元整" in text
+    assert "增值税专用发票" in text
+
+
+def test_md_without_schema_falls_back_to_text(skill, tmp_path):
+    """--schema none → 不抽 schema，退回通用渲染（这里没有表格版式，应为原文）。"""
+    from schemas import MODE_NONE, apply_schemas
+
+    data = _invoice_data()
+    apply_schemas(data["pages"], MODE_NONE)
+    assert "schema" not in data["pages"][0], "none 态不得写入 schema 键"
+    out = skill._render(data, "md", str(tmp_path / "raw.md"), "in.pdf", False, "markdown")
+    text = open(out, encoding="utf-8").read()
+
+    # 未启用 schema 时，发票的字段化排版（[购买方] 段落标题）不应出现
+    assert "[购买方]" not in text
+
+
+def test_html_only_embeds_css_of_hit_schemas(skill, tmp_path):
+    """html 导出只在真正命中时拼票面 CSS，避免无 schema 的文档带上用不上的样式。"""
+    from schemas import MODE_NONE, apply_schemas
+
+    plain = {"pages": [{"page": 1, "raw_text": "这是一段普通正文。",
+                        "lines": [], "img_w": 0, "img_h": 0, "engine": "disc"}]}
+    apply_schemas(plain["pages"], MODE_NONE)
+    out = skill._render(plain, "html", str(tmp_path / "p.html"), "in.pdf", False, "markdown")
+    html = open(out, encoding="utf-8").read()
+    assert "inv-wrap" not in html, "未命中任何 schema 时不应嵌入票面 CSS"
+
+    data = _invoice_data()
+    apply_schemas(data["pages"], "auto")
+    out = skill._render(data, "html", str(tmp_path / "i.html"), "in.pdf", False, "markdown")
+    html = open(out, encoding="utf-8").read()
+    assert "inv-wrap" in html, "命中发票 schema 时必须带上票面 CSS"

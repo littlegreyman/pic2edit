@@ -318,3 +318,6 @@ if __name__ == "__main__":
     with open(out, "w", encoding="utf-8") as f:
         f.write(render_invoice_html(sample))
     print(f"written: {out}")
+
+# 公开别名：provider 层不调用带下划线的私有名
+invoice_fragment = _invoice_fragment

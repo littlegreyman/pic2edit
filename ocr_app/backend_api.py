@@ -17,6 +17,10 @@ GUI 与 Skill 两个前端都**只应通过本模块**访问 OCR 后端能力，
   GUI 与 Skill 共用同一套表格重建逻辑，避免两侧能力漂移。
 - 引擎发现与命令行构造（``discover_engine`` / ``build_engine_command``）：
   封装 ``run_llamacpp_server`` 的 CLI 细节，前端只拿结果，不依赖其模块名。
+- 凭证 schema（``list_schemas`` / ``apply_schemas`` / ``render_schema`` /
+  ``schema_css``）：schema 的发现、选择、抽取、渲染。前端只知道
+  「有三个态：none / auto / <id>」，不需要知道有哪些凭证类型，更不需要
+  在代码里 import 它们——新增类型靠往目录里丢文件，不改前端。
 """
 from __future__ import annotations
 
@@ -40,6 +44,19 @@ from utils.export_docx import save_text, md_to_docx, md_pages_to_docx
 # 表格能力（两门户同源）
 from utils.table_utils import kv_text_to_markdown_table
 from utils.table_layout import build_table_from_lines
+
+# 凭证 schema（消费侧门面：发现 / 三态选择 / 抽取 / 渲染）
+from schemas import (
+    MODE_AUTO,
+    MODE_NONE,
+    SchemaProvider,
+    apply_schemas,
+    list_schemas,
+    render_schema,
+    reset_registry,
+    resolve_schema,
+    schema_css,
+)
 
 # 引擎 CLI 细节：仅供门面内部使用，对外只暴露下面两个函数
 import run_llamacpp_server as _engine_cli
@@ -116,4 +133,14 @@ __all__ = [
     # 引擎 CLI 适配
     "discover_engine",
     "build_engine_command",
+    # 凭证 schema
+    "MODE_NONE",
+    "MODE_AUTO",
+    "SchemaProvider",
+    "list_schemas",
+    "resolve_schema",
+    "apply_schemas",
+    "render_schema",
+    "schema_css",
+    "reset_registry",
 ]
