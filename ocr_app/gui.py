@@ -162,10 +162,22 @@ class SettingsDialog(QDialog):
         self.tf_quant = QComboBox()
         self.tf_quant.addItems(["8bit", "4bit", "none"])
         self.tf_quant.setCurrentText(cfg.tf_quant)
+        # 分辨率模式是**模型加载期**参数（RESOLUTION_MODES → base_size/image_size/
+        # crop_mode），只有 transformers 服务消费它（transformers_server.py --mode）。
+        # 此前这个下拉挂在 llama.cpp 页上，选了只改状态栏文字——正好挂在用不上它的
+        # 后端上。现在挪到唯一生效的页面，并由 _start_transformers 真正传下去。
+        self.resolution = QComboBox()
+        self.resolution.addItems(list(RESOLUTION_MODES.keys()))
+        self.resolution.setCurrentText(cfg.resolution)
+        self.resolution.setToolTip(
+            "模型加载分辨率。Gundam = 动态多尺度（1024 base / 640 image + 裁切），"
+            "适合复杂版面；显存紧张或要快就换 Tiny/Small。"
+            "改动后需重启 transformers 服务才生效。")
         tl.addRow("服务地址", self.tf_url)
         tl.addRow("Python 解释器", self.tf_python)
         tl.addRow("模型目录", self.tf_model)
         tl.addRow("量化精度", self.tf_quant)
+        tl.addRow("分辨率模式", self.resolution)
         gb_mp_tf, mp_tf = self._make_model_params_group()
         tl.addRow(gb_mp_tf)
         self.stack.addWidget(page_tf)
@@ -175,12 +187,8 @@ class SettingsDialog(QDialog):
         lcl = QFormLayout(page_lcp)
         self.lcp_url = QLineEdit(cfg.llama_cpp_url)
         self.lcp_model = QLineEdit(cfg.llama_cpp_model)
-        self.resolution = QComboBox()
-        self.resolution.addItems(list(RESOLUTION_MODES.keys()))
-        self.resolution.setCurrentText(cfg.resolution)
         lcl.addRow("服务地址", self.lcp_url)
         lcl.addRow("模型名", self.lcp_model)
-        lcl.addRow("分辨率模式", self.resolution)
         gb_mp_l, mp_l = self._make_model_params_group()
         lcl.addRow(gb_mp_l)
         self.stack.addWidget(page_lcp)
@@ -598,7 +606,10 @@ class MainWindow(QMainWindow):
     def _backend_status(self) -> str:
         ok = self.backend.available()
         tag = "就绪" if ok else "不可用"
-        return f"后端[{self.backend.name}] {tag}（{self.cfg.resolution} / {self.cfg.prompt_template}）"
+        # 分辨率只对 transformers 有意义（模型加载期参数）：别的后端写上去只会
+        # 让人以为"选了分辨率就生效了"。
+        extra = f"{self.cfg.resolution} / " if self.cfg.backend == "transformers" else ""
+        return f"后端[{self.backend.name}] {tag}（{extra}{self.cfg.prompt_template}）"
 
     # ---------- 输出格式（提示词模板）----------
     def _sync_template_combo(self):

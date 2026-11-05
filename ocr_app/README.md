@@ -14,10 +14,10 @@
   - **Transformers**：直接加载本地 HF 官方模型，支持 4/8bit 量化（需独立 Python 3.11 环境）。模型由常驻本地服务（`transformers_server.py`）加载一次、驻留显存，多页连续转换很快。
 - **输入格式**
   - 图片：`.jpg / .jpeg / .tif / .tiff / .png / .bmp / .webp`
-  - **PDF 中的图形**：整页渲染为高 DPI 图像做完整版面 OCR，同时抽取 PDF 内嵌图形作为独立图像项。
+  - **PDF**：整页渲染为高 DPI 图像做完整版面 OCR（不再单独抽取页内嵌图：插图无文字，判别式返回空、VLM 却会脑补英文垃圾，见 `utils/input_prep.py` 模块注释）。
   - **多页 TIF**：逐帧拆分，每帧单独转换。
-- **分辨率模式**：Tiny / Small / Base / Large / Gundam（动态多尺度，适合复杂版面）。
-- **提示词模板**：转 Markdown / 纯 OCR / 解析图表。
+- **分辨率模式（仅 transformers 后端）**：Tiny / Small / Base / Large / Gundam（动态多尺度，适合复杂版面）。这是**模型加载期**参数，改动后需重启本地服务；GUI 里该下拉放在“Transformers”子页，由启动器以 `--mode` 传给 `transformers_server.py`。llama.cpp / Ollama 两个后端不消费它（量化 GGUF 的分辨率在模型内固定）。
+- **提示词模板**：转 Markdown / 纯 OCR / 解析图表 / 表格（键值→表）/ 表格（HTML，合并单元格）——五种，与主窗口“输出格式”下拉一致。
 - **输出与导出**：右栏直接编辑 Markdown，可切换“编辑/预览”，一键导出 `.docx / .md / .txt`。
 
 ## 目录结构

@@ -20,7 +20,9 @@ agent_created: true
      - `md`（默认）：可读文本。命中凭证 schema 时输出「中文栏目 + 明细表 + `（未识别）`占位」；否则输出可读识别文本。
      - `html`：命中凭证 schema 时**严格按 schema 版式**还原（红框/省名/蓝字/合并单元格），不含坐标表、不含原始全文；未命中 schema 时按 OCR 坐标**尽量还原原图版面**。
      - `json`：原样输出 `pages[]`，每页含 `raw_text` / `text` / `engine` / `lines`（坐标）/ **`schema`（结构化字段）**，供入库与二次加工。
-     - `txt` / `docx`：同 `md` 的分派逻辑（txt 用 `标签：值` + TAB，docx 走 md→docx）。
+     - `txt` / `docx`：命中 schema 时与 `md` 一样按字段输出（txt 用 `标签：值` + TAB，docx 走 md→docx）；
+       未命中时 `docx` 仍走 `md` 的表格还原（Word 里是真表格），而 `txt` **只输出识别文本、不排表**——
+       纯文本里塞 Markdown 表语法只会变成一堆竖线噪声，这是刻意保留的差异。
    - 识别模式 `--mode`：**这是 pic2edit 的识别流水线参数，只影响"怎么识别"，不影响"渲染成什么"**。
      `markdown`（默认）/ `ocr` / `figure`（图表公式）/ `table`（键值→表，确定性后处理）/ `html_table`（**合并单元格表格**：让模型输出带 rowspan/colspan 的 HTML，docx 里还原真实合并单元格，适合发票明细、复杂报表）。
      `mode` 会同时决定**提示词**与**路由**（table/figure/html_table 跳过 RapidOCR 直走 VLM）。

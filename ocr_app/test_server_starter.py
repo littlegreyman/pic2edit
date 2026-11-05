@@ -161,6 +161,46 @@ def test_gui_starter_passes_url_port_to_engine(monkeypatch):
 
 
 # ---------------- 4. 引擎必须听在调用方指定的端口 ----------------
+def test_start_transformers_passes_mode_and_port(monkeypatch):
+    """``--mode``（分辨率）与 ``--port`` 必须真的传给 transformers 服务。
+
+    审查报告 §5-2：GUI 的“分辨率模式”下拉只写进状态栏文字，从不传给引擎，是伪能力。
+    接上之后这条测试盯住"确实进了启动命令"。
+    """
+    _app()
+    seen = {}
+
+    monkeypatch.setattr(S.os.path, "isfile", lambda p: True)   # 假装 .venv_tf 已就绪
+    monkeypatch.setattr(S, "port_of", lambda url: "8009")
+
+    class _FakeLauncher:
+        def start(self, cmd, **kw):
+            seen["cmd"] = list(cmd)
+            raise RuntimeError("到此为止")
+
+    monkeypatch.setattr(S, "EngineLauncher", _FakeLauncher)
+
+    cfg = type("C", (), {"resolution": "Small"})()
+    st = S.ServerStarter("transformers", "http://localhost:8009", cfg=cfg)
+    st._start_transformers()
+
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--mode") + 1] == "Small", f"分辨率没传给服务：{cmd}"
+    assert cmd[cmd.index("--port") + 1] == "8009", f"端口没传给服务：{cmd}"
+
+
+def test_transformers_launcher_builds_cmd_with_mode():
+    """``run_transformers_server.build_cmd`` 是 --mode / --port 的唯一拼装点。"""
+    import run_transformers_server as R
+
+    cmd = R.build_cmd("py", "/m", "8bit", port="8010", mode="Base")
+    assert cmd[cmd.index("--mode") + 1] == "Base"
+    assert cmd[cmd.index("--port") + 1] == "8010"
+    # 缺省时退回 Gundam / 默认端口，不能抛
+    cmd2 = R.build_cmd("py", "/m", "8bit")
+    assert cmd2[cmd2.index("--mode") + 1] == R.DEFAULT_MODE
+
+
 def test_port_of_reads_url():
     assert B.port_of("http://127.0.0.1:8081") == "8081"
     assert B.port_of("http://localhost:9999/") == "9999"

@@ -24,7 +24,7 @@ Everything runs on your machine — no cloud, no uploads.
 ## ✨ 功能特性
 
 - **完全离线、隐私友好**：模型与引擎下载到本地后断网即可运行；转换过程无任何网络上传。
-- **丰富输入**：图片 `jpg / jpeg / tif / tiff / png / bmp / webp`；PDF 整页高 DPI 渲染做版面 OCR，并抽取 PDF 内嵌图形作为独立图像项；多页 TIF 逐帧拆分。
+- **丰富输入**：图片 `jpg / jpeg / tif / tiff / png / bmp / webp`；PDF 整页高 DPI 渲染做版面 OCR；多页 TIF 逐帧拆分。
 - **DeepSeek-OCR 视觉语言模型**：保留版式、表格与坐标感知输出（`<|grounding|>`）。
 - **三后端可切换**：
   - **llama.cpp（默认、最轻量）**：官方预编译 `llama-server` + 量化 GGUF（Q4_K_M 约 2GB，最省显存，适配 8GB 显卡）。
@@ -172,7 +172,7 @@ Ollama / Transformers 的配置步骤见 [`ocr_app/README.md`](ocr_app/README.md
 
 ## 📤 输出格式
 
-GUI 主窗口工具栏的“输出格式”下拉提供四种模式（仅提示词与后续处理不同，底层采样参数一致）：
+GUI 主窗口工具栏的“输出格式”下拉提供五种模式（仅提示词与后续处理不同，底层采样参数一致）：
 
 | 选项 | 发送的提示词 | 说明 |
 | --- | --- | --- |
@@ -180,6 +180,7 @@ GUI 主窗口工具栏的“输出格式”下拉提供四种模式（仅提示�
 | 纯文本 OCR | `Free OCR.` | 无布局、纯文本 |
 | 图表·公式 | `Parse the figure.` | 解析图表 / 公式 |
 | 表格（键值→表） | `<|grounding|>Convert the document to markdown.` + 客户端 KV→表 | 真表格由模型原生输出 `\|` 表；对“键：值”标签版式，由 `kv_text_to_markdown_table` 做确定性后处理转成两列表 |
+| 表格（HTML/合并单元格） | `<|grounding|>Convert complex tables (e.g. invoices with merged cells) to HTML with rowspan/colspan.` | 让模型直接输出带 `rowspan`/`colspan` 的 HTML，适合带合并单元格的票面与报表；导出的 HTML 里表格按原行列结构渲染 |
 
 ---
 

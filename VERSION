@@ -1,6 +1,28 @@
-pic2edit 0.18 (alpha)
+pic2edit 0.19 (alpha)
 ========================
-本地离线图片转可编辑文档工具 —— alpha 0.18 里程碑。
+本地离线图片转可编辑文档工具 —— alpha 0.19 里程碑。
+
+alpha 0.19 相对 0.18 的变更：
+- 架构收口为「双前端共享内核」：GUI(Qt) 与 skill(CLI) 都只经 backend_api 门面访问内核，
+  skill 侧由静态守卫测试钉住（出现 from utils.* / from backends.* 即红）。
+  文档分组/页序/选择规约收敛到零 Qt 的 document_controller。
+- 凭证 schema 子系统（Phase 3/4）：schema 从转换流程里彻底搬出，成为 drop-in 包
+  （内置 → $PIC2EDIT_SCHEMA_DIR → ~/.pic2edit/schemas，同名覆盖）。
+  三态 none/auto/<id>；生产侧支持声明式（manifest.json + schema.yaml + 可选
+  layout.html，零 Python）与插件式；附 lint 对账与 `python -m schemas.cli
+  list|validate|test|new|pack`。发票 = 插件式，固定资产卡片 = 声明式参考实现。
+- 忠实版式导出：无 schema 的页面改用「原图垫底 + 按 OCR 坐标叠透明文字层」
+  （同可搜索 PDF 的做法），不再用 HTML 重排版面冒充原件；GUI 与 skill 同源，
+  三档降级（schema → 原图垫底 → 文本/表格重排）。
+- 引擎诊断下沉 backends/engine_boot.py（非 Qt）：显存预检 → 拉起 → 输出落盘 →
+  平台化提示，GUI 与 skill 共用；拉起端口跟随服务地址（此前恒 8080，
+  指定别的端口必然超时并留下孤儿进程）。
+- 供应链与注入面加固：引擎下载加 SHA256 白名单（未钉 hash 只走官方域名，
+  校验失败不换镜像重试）、解压做 Zip Slip/符号链接守卫、去掉运行时 pip install；
+  导出 HTML 与 GUI 预览统一过白名单清洗；表格 colspan/rowspan 夹取与整表规模上限。
+- skill 补齐与 GUI 对齐的三项能力：目录/多文件输入、按 mode 下发提示词与采样参数、
+  `schemas.cli pack`；缓存键纳入识别层参数，schema 与底图/坐标在命中时按需重算。
+- 依赖下限抬到已修复漏洞的版本；ruff 进 CI（pip 钉 0.17.4，避免新规则无端变红）。
 
 alpha 0.18 相对 0.17 的变更：
 - 打包发布：新增 PyInstaller 冻结 + Inno Setup 安装包（packaging/），可安装到任意盘（含非系统盘），首次运行自动下载模型/引擎到安装目录（跟随所选盘符）。
@@ -18,8 +40,8 @@ alpha 0.16 相对 0.15 的变更：
 - DeepSeek-OCR 本地离线 OCR，把 jpg/tif/pdf 转可编辑 Markdown。
 - 三后端可切换（默认 llama_cpp）：llama.cpp（官方预编译 llama-server + Q4_K_M GGUF，最省显存）、Ollama、Transformers（独立 Python 3.11 常驻服务）。
 - PySide6 双栏 GUI（左待转换、右可编辑），支持导出 .docx/.md/.txt。
-- 输入：PDF 整页渲染 + 抽取内嵌图形；TIF 多帧拆分；统一落地临时 PNG。
-- 输出格式下拉（主窗口工具栏）：Markdown / 纯文本 OCR / 图表公式 / 表格（键值→表）。
+- 输入：PDF 整页高 DPI 渲染（不再抽取页内嵌图）；TIF 多帧拆分；统一落地临时 PNG。
+- 输出格式下拉（主窗口工具栏）：Markdown / 纯文本 OCR / 图表·公式 / 表格（键值→表）/ 表格（HTML，合并单元格）——五种。
 - 验证：_smoke_test.py（无界面端到端）、verify_backend.py（契约 mock + --live 真机 OCR）。
 
 alpha 0.15 相对 0.1 的变更：

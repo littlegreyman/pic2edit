@@ -66,9 +66,30 @@ def test_get_config_backend_and_fields():
     print("PASS - get_config 按当前后端读取 backend 与字段（逻辑不变）")
 
 
+def test_resolution_combo_lives_on_transformers_page():
+    """分辨率模式是模型加载期参数，只有 transformers 服务消费它。
+
+    审查报告 §5-2：这个下拉原本挂在 **llama.cpp** 页上，选了只改状态栏文字——
+    正好挂在用不上它的后端上，而真正生效的 transformers 页反而没有。
+    """
+    app = QApplication.instance() or QApplication([])
+    dlg = make_dlg("transformers")
+    tf_page = dlg.stack.widget(1)
+    lcp_page = dlg.stack.widget(2)
+
+    assert tf_page.isAncestorOf(dlg.resolution), "分辨率下拉必须挂在 transformers 页"
+    assert not lcp_page.isAncestorOf(dlg.resolution), "llama.cpp 不消费分辨率，不该有这个下拉"
+
+    dlg.resolution.setCurrentText("Small")
+    assert dlg.get_config().resolution == "Small", "选中的档位必须写回配置（再由启动器传给服务）"
+    dlg.close()
+    app.processEvents()
+
+
 def main():
     test_backend_switch_shows_only_matching_page()
     test_get_config_backend_and_fields()
+    test_resolution_combo_lives_on_transformers_page()
     print("ALL PASS: test_settings")
 
 

@@ -137,7 +137,11 @@ class ServerStarter(QThread):
         if not os.path.isfile(venv_tf):
             self._fail("未找到 .venv_tf 解释器，请先运行 download_models_tf.bat 建好环境。")
             return
-        cmd = [venv_tf, script]
+        cmd = [venv_tf, script,
+               # 端口跟着服务地址走（同 llama.cpp 那条路径的坑）；
+               # --mode 是模型加载期的分辨率档位，GUI 的“分辨率模式”就落在这里。
+               "--port", port_of(self.url),
+               "--mode", getattr(self.cfg, "resolution", None) or "Gundam"]
         self.log.emit("[launch] " + " ".join(cmd))
         _logger.info("launching engine: %s", " ".join(cmd))
         self.log.emit("[wait] 正在加载 transformers 模型（首次约 1–3 分钟），请稍候…")
