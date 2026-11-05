@@ -166,8 +166,10 @@ class OcrWorker(QThread):
             return
         item.schema = page.get("schema")
         item.schema_id = page.get("schema_id")
+        item.schema_version = page.get("schema_version")
         if item.schema_id:
-            _logger.info("schema hit: %s -> %s", item.name, item.schema_id)
+            _logger.info("schema hit: %s -> %s v%s", item.name, item.schema_id,
+                         item.schema_version or "?")
 
     # ---------- 表格重建（坐标 -> Markdown 表格）----------
     def _disc_backend(self):

@@ -42,6 +42,8 @@ class InputItem:
         # 未启用 schema（--schema none / GUI 选“不使用”）时这两个字段恒为 None。
         self.schema = None
         self.schema_id = None
+        # 命中时抽取所用的 schema 版本：产物要能回答"按哪一版规则抽的"
+        self.schema_version = None
 
 
 @dataclass

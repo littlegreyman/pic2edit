@@ -95,12 +95,41 @@ def test_md_to_docx_backward_compat():
     assert "gridSpan" in doc2.element.xml or "vMerge" in doc2.element.xml
 
 
+def test_span_attrs_are_clamped():
+    """rowspan/colspan 来自 VLM 输出，必须 clamp：幻觉出的巨值会 OOM，
+    非数字会让导出整条链路抛异常（用户只看到"导出失败"）。
+
+    修复前 ``int("abc")`` 直接 ValueError；``rowspan="10000000"`` 会分配 10^7 行网格。
+    """
+    html = ('<table>'
+            '<tr><td rowspan="10000000">a</td><td colspan="abc">b</td></tr>'
+            '<tr><td colspan="-5">c</td></tr>'
+            '</table>')
+    tables = parse_html_tables(html)
+    cells = [c for row in tables[0] for c in row]
+    assert cells[0]["rowspan"] == 200, "应被夹到 MAX_SPAN"
+    assert cells[1]["colspan"] == 1, "非数字按 1 处理，不能抛异常"
+    assert cells[2]["colspan"] == 1, "负数按 1 处理"
+
+    grid, nrows, ncols, anchors = layout_table(tables[0])
+    assert nrows <= 200 and ncols >= 1, "布局必须收敛，不能按 10^7 展开"
+
+
+def test_oversized_grid_is_rejected():
+    """整表规模超限时直接放弃合并（返回空表），而不是把内存吃光。"""
+    row = [{"text": "x", "rowspan": 200, "colspan": 200} for _ in range(10)]
+    grid, nrows, ncols, anchors = layout_table([row] * 10)
+    assert (grid, nrows, ncols, anchors) == ([], 0, 0, [])
+
+
 def main():
     test_parse_html_tables()
     test_layout_rowspan()
     test_layout_colspan()
     test_render_html_table_merges()
     test_render_html_colspan_merges()
+    test_span_attrs_are_clamped()
+    test_oversized_grid_is_rejected()
     test_md_to_docx_backward_compat()
     print("ALL PASS: test_table_html")
 

@@ -57,9 +57,16 @@ def _lint_plugin(pkg_dir: str, manifest: Dict[str, Any],
                     _err(issues, "error", entry, f"实现缺少 {name}()")
     except Exception as e:
         _err(issues, "error", entry, f"加载失败: {e}")
+    # layout 只对声明式有意义：它指的是 layout.html 这个**版式文件**。
+    # 插件式的 HTML 由 render_html() 现算，声明 layout 会让"文件存在就算过"的检查
+    # 读到一个 .py 当版式——语义混淆，明确提示。
     layout = manifest.get("layout")
-    if layout and not os.path.isfile(os.path.join(pkg_dir, layout)):
-        _err(issues, "error", layout, "文件不存在")
+    if layout:
+        _err(issues, "warning", "manifest.json",
+             "entry 与 layout 同时声明：layout 是声明式的 HTML 版式文件，"
+             "插件式的 HTML 应由 render_html() 提供，请删除 layout 键")
+        if not os.path.isfile(os.path.join(pkg_dir, layout)):
+            _err(issues, "error", layout, "文件不存在")
     ok = not any(i["level"] == "error" for i in issues)
     return {"ok": ok, "issues": issues, "pkg": pkg_dir, "id": manifest.get("id")}
 

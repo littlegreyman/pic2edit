@@ -100,6 +100,7 @@ def test_none_mode_touches_nothing():
     stats = apply_schemas([page], MODE_NONE)
     assert stats["hits"] == 0
     assert "schema" not in page and "schema_id" not in page
+    assert "schema_version" not in page
 
 
 def test_auto_mode_hits_invoice_sample():
@@ -110,6 +111,14 @@ def test_auto_mode_hits_invoice_sample():
     assert stats["applied"] == {"invoice": 1}
 
 
+def test_hit_records_schema_version():
+    """产物必须记录版本：schema 升版后要能解释"同一批文件两次导出为何不同"。"""
+    page = invoice_sample.page()
+    stats = apply_schemas([page], MODE_AUTO)
+    assert page["schema_version"] == "1.0.0"
+    assert stats["versions"] == {"invoice": "1.0.0"}
+
+
 def test_auto_mode_marks_non_invoice_page_as_miss():
     page = {"page": 1, "text": "中华人民共和国注册会计师法\n第一章 总则",
             "raw_text": "中华人民共和国注册会计师法\n第一章 总则",
@@ -118,6 +127,22 @@ def test_auto_mode_marks_non_invoice_page_as_miss():
     assert stats["hits"] == 0
     # 关键：键要写进去（值是 None），下游据此区分「启用未命中」与「没启用」
     assert page["schema"] is None and page["schema_id"] is None
+
+
+def test_info_reports_origin_and_package_dir():
+    """来源必须是「实际加载的根目录」而不是包自报的 kind。
+
+    用户把内置包拷到 ~/.pic2edit/schemas 改过之后，kind 仍是 manifest 里的
+    "builtin"，只有 origin 能回答"生效的是我改的那份吗"。
+    """
+    infos = {i["id"]: i for i in list_schemas()}
+    inv = infos["invoice"]
+    assert inv["origin"] == "builtin"
+    assert inv["path"] and os.path.isdir(inv["path"])
+    # 插件式不再声明 layout（HTML 由 render_html() 现算，不是模板文件）
+    assert not inv.get("layout")
+    ac = infos["asset_card"]
+    assert ac["layout"] == "layout.html", "声明式仍应声明 HTML 版式"
 
 
 def test_forced_id_uses_only_that_schema():
@@ -180,18 +205,26 @@ def test_schema_css_follows_hits():
 
 # ---------------------------------------------------------------- 静态守卫
 def test_skill_has_no_invoice_field_knowledge():
-    """转换脚本里不得再出现任何发票字段符号——schema 必须能被整体替换掉。"""
+    """转换脚本里不得再出现任何发票字段符号——schema 必须能被整体替换掉。
+
+    扫的是 skill 的**整个 scripts 目录**，不只入口脚本：曾经有个 ``_selftest.py``
+    直接 ``from invoice_render import ...``，入口脚本是干净的，票种知识却从旁边
+    漏了进来（并在 Phase 3.2 搬走 invoice_render 后变成一条 ImportError）。
+    """
     here = os.path.dirname(os.path.abspath(__file__))
-    skill = os.path.join(here, "..", ".workbuddy", "skills", "pic2edit-ocr",
-                         "scripts", "pic2edit_convert.py")
-    if not os.path.isfile(skill):        # CI 里 skill 不在仓库内时跳过
+    scripts = os.path.join(here, "..", ".workbuddy", "skills", "pic2edit-ocr", "scripts")
+    if not os.path.isdir(scripts):        # CI 里 skill 不在仓库内时跳过
         pytest.skip("skill 脚本不在当前检出中")
-    src = open(skill, encoding="utf-8").read()
-    leaked = [s for s in ("_extract_invoice", "_render_md_schema", "_render_txt_schema",
-                          "_invoice_fragment", "invoice_render", "INVOICE_CSS",
-                          "_extract_items_from_lines", "_extract_totals_geom")
-              if s in src]
-    assert not leaked, f"发票字段知识仍残留在转换流程里: {leaked}"
+    marks = ("_extract_invoice", "_render_md_schema", "_render_txt_schema",
+             "_invoice_fragment", "invoice_render", "INVOICE_CSS",
+             "_extract_items_from_lines", "_extract_totals_geom")
+    leaked = []
+    for fn in sorted(os.listdir(scripts)):
+        if not fn.endswith(".py"):
+            continue
+        src = open(os.path.join(scripts, fn), encoding="utf-8").read()
+        leaked += [f"{fn}:{m}" for m in marks if m in src]
+    assert not leaked, f"发票字段知识仍残留在转换侧: {leaked}"
 
 
 def test_schema_package_imports_without_qt():

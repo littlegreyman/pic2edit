@@ -13,6 +13,7 @@
 未命中的页一切照旧——这是「有 schema 更好、没 schema 也能用」的落地方式。
 """
 import json
+import os
 import re
 from datetime import datetime
 from typing import List
@@ -23,6 +24,8 @@ from schemas import render_schema, schema_css
 
 from .assemble import assemble_document
 from .export_docx import save_text, md_pages_to_docx
+from .faithful_html import faithful_css, page_with_image
+from .html_safety import sanitize_html
 
 # 导出对话框的过滤器顺序（与 GUI 保持一致）
 FILTERS = "Word 文档 (*.docx);;Markdown (*.md);;文本 (*.txt);;HTML (*.html);;JSON (*.json)"
@@ -60,12 +63,32 @@ def _page_dict(it) -> dict:
     return {
         "schema": getattr(it, "schema", None),
         "schema_id": getattr(it, "schema_id", None),
+        "schema_version": getattr(it, "schema_version", None),
         "text": text,
         "raw_text": text,
         "lines": getattr(it, "lines", None) or [],
         "img_w": getattr(it, "img_w", 0) or 0,
         "img_h": getattr(it, "img_h", 0) or 0,
     }
+
+
+def _schema_versions(pages: List) -> dict:
+    """``{schema_id: version}``：本次导出实际用到的 schema 及其版本。
+
+    产物必须能回答「这份数据是按哪一版规则抽的」。只记 id 时，schema 从 1.0.0 改到
+    1.1.0（例如补了一个字段）之后，历史产物无法解释两次导出为何不同。
+    """
+    out = {}
+    for it in pages:
+        sid = getattr(it, "schema_id", None)
+        if sid and getattr(it, "schema", None):
+            out[sid] = getattr(it, "schema_version", None) or ""
+    return out
+
+
+def _schema_stamp(pages: List) -> str:
+    """``"invoice@1.0.0、asset_card@1.0.0"``；没有命中则返回空串。"""
+    return "、".join(f"{k}@{v}" for k, v in sorted(_schema_versions(pages).items()) if v)
 
 
 def item_text(it, fmt: str = "md") -> str:
@@ -91,8 +114,16 @@ def _pages_data(pages: List) -> List[tuple]:
 
 
 def export_markdown(pages: List, path: str):
-    """导出为 Markdown（装配后的多页可读文本）。"""
-    save_text(assemble_document([item_text(it, "md") for it in pages]), path)
+    """导出为 Markdown（装配后的多页可读文本）。
+
+    命中 schema 时在文首加一行 ``<!-- schema: id@version -->``：md 注释在渲染后不可见，
+    但保留了「这份文件按哪一版规则抽取」的溯源信息。
+    """
+    body = assemble_document([item_text(it, "md") for it in pages])
+    stamp = _schema_stamp(pages)
+    if stamp:
+        body = f"<!-- schema: {stamp} -->\n\n{body}"
+    save_text(body, path)
 
 
 def export_text(pages: List, path: str):
@@ -123,11 +154,22 @@ def _esc_html(s: str) -> str:
 
 
 def export_html(pages: List, path: str):
-    """导出为独立 HTML：每页一段 <section>，页内 Markdown 经 markdown 库转 HTML。
+    """导出为独立 HTML：每页一段 <section>。
 
-    表格走 markdown 的 ``tables`` 扩展、围栏代码走 ``fenced_code``，最大限度保留版面。
-    命中 schema 的页改用该 schema 的版式片段（如发票票面），并只拼接**实际用到**的
-    附加样式——没有命中任何 schema 时，导出的文件不该带一套用不上的票面 CSS。
+    三条分派，按保真度从高到低：
+
+    1. 命中凭证 schema → 该 schema 的版式片段（如发票票面）；
+    2. 无 schema 但有**原图 + 坐标** → 「原图垫底 + 透明文字层」（``page_with_image``）。
+       这就是"可搜索 PDF"的做法，位置来自 OCR 而不是猜测；用户的三案例之②
+       「只规定数据格式、复现尽量按来源版式」在 GUI 侧靠这条成立。
+    3. 都没有 → Markdown 转 HTML 重排。
+
+    此前只有 skill 侧接了第 2 档，GUI 一律走第 3 档，于是**同一份文件从两个入口
+    导出的 html 长得不一样**，且重排会把版面推断错。
+
+    所有分支的产物都过 :func:`sanitize_html`：识别文本是不可信输入，而
+    ``markdown`` 默认保留原始 HTML 直通（``<script>``、``<img src=http://…>`` 会被
+    原样写进交付文件，并在 GUI 预览时产生外连）。
     """
     blocks = []
     page_dicts = []
@@ -137,21 +179,28 @@ def export_html(pages: List, path: str):
         name = getattr(it, "name", f"第{idx}页")
         pd = _page_dict(it)
         page_dicts.append(pd)
+        body = ""
         if getattr(it, "schema", None):
-            body = render_schema(pd, "html")
-        else:
-            body = ""
+            body = sanitize_html(render_schema(pd, "html"))
         if not body:
-            body = _md_lib.markdown(item_text(it, "md"),
-                                    extensions=["tables", "fenced_code"])
+            # 第 2 档：忠实版式。需要原图路径 + 行框 + 原图尺寸，缺一即返回 None。
+            pd["image"] = getattr(it, "image_path", "") or ""
+            body = page_with_image(pd, uid=f"p{idx}", title=f"第 {idx} 页") or ""
+            body = sanitize_html(body)
+        if not body:
+            body = sanitize_html(_md_lib.markdown(item_text(it, "md"),
+                                                  extensions=["tables", "fenced_code"]))
         blocks.append(
             f"<section class='page'>\n<h2 class='page-title'>第 {idx} 页 · {_esc_html(name)}</h2>\n{body}\n</section>"
         )
     if not blocks:
         blocks.append("<p>（无内容）</p>")
-    extra_css = schema_css(page_dicts)
+    extra_css = schema_css(page_dicts) + "\n" + faithful_css()
+    stamp = _schema_stamp(pages)
+    meta = f'<meta name="pic2edit-schema" content="{_esc_html(stamp)}">\n' if stamp else ""
     html = (
         "<!DOCTYPE html>\n<html lang='zh-CN'>\n<head>\n<meta charset='utf-8'>\n"
+        + meta +
         "<title>识别结果</title>\n<style>" + _HTML_CSS + "\n" + extra_css + "</style>\n</head>\n<body>\n"
         + "\n".join(blocks) + "\n</body>\n</html>"
     )
@@ -161,8 +210,12 @@ def export_html(pages: List, path: str):
 def export_json(pages: List, source: str, path: str):
     """导出为结构化 JSON：逐页 {index, name, text[, schema]}，附来源与时间戳，便于入库。
 
-    命中凭证 schema 的页额外带 ``schema_id`` 与结构化字段——这正是 RAG / 资料库
-    真正想要的部分（字段值可直接建索引），而不是一张图的 OCR 散文。
+    命中凭证 schema 的页额外带 ``schema_id`` / ``schema_version`` 与结构化字段——
+    这正是 RAG / 资料库真正想要的部分（字段值可直接建索引），而不是一张图的 OCR 散文。
+
+    ``source`` 只写**文件名**：完整路径会连目录结构与用户名一起外泄
+    （``/home/alice/客户资料/2026/发票.pdf``），而票据恰恰是最敏感的一类。
+    需要完整路径做审计的调用方可以自己在外面记，不要把它塞进对外交付物。
     """
     rows = []
     for idx, name, text in _pages_data(pages):
@@ -172,14 +225,19 @@ def export_json(pages: List, source: str, path: str):
         doc = getattr(it, "schema", None) if it is not None else None
         if sid and doc:
             row["schema_id"] = sid
+            row["schema_version"] = getattr(it, "schema_version", None) or None
             row["schema"] = doc
         rows.append(row)
+    versions = _schema_versions(pages)
     data = {
-        "source": source or "",
+        "source": os.path.basename(source) if source else "",
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "format": "json",
         "page_count": len(pages),
         "schema_pages": sum(1 for r in rows if r.get("schema_id")),
+        # 顶层汇总：一份产物用了哪些 schema、各自哪一版。只记 id 时，schema 升版后
+        # 无法解释"同一批文件两次导出为何不同"。
+        "schema": versions,
         "pages": rows,
     }
     with open(path, "w", encoding="utf-8") as f:

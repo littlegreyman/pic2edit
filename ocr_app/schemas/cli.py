@@ -7,6 +7,7 @@
     python -m schemas.cli validate <目录|id>        # 结构与版式对账
     python -m schemas.cli test <目录|id>            # 用 samples/ 跑命中率
     python -m schemas.cli new <id> [--title 名称]   # 生成一个空壳
+    python -m schemas.cli pack <目录|id>            # 打进一个可分发的 .zip
 
 为什么单独做一个 CLI，而不是塞进 ``pic2edit_convert.py``
 --------------------------------------------------------
@@ -19,8 +20,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
+import re
 import sys
+import zipfile
 from typing import Any, Dict, List, Optional
 
 if __package__ in (None, ""):  # 允许 `python schemas/cli.py` 直接跑
@@ -30,6 +34,10 @@ if __package__ in (None, ""):  # 允许 `python schemas/cli.py` 直接跑
 from . import get_registry, list_schemas, reset_registry  # noqa: E402
 from .lint import check_samples, lint_package  # noqa: E402
 from .registry import BUILTIN_ROOT, USER_ROOT  # noqa: E402
+
+#: schema id 同时是**目录名**与注册表的 key，必须是一个受约束的标识符。
+#: 不校验它，``new ../../foo`` 会写到用户目录之外并覆盖同名文件。
+_SAFE_ID_RE = re.compile(r"[a-z][a-z0-9_\-]{0,31}")
 
 _TEMPLATE_MANIFEST = """{
   "id": "{id}",
@@ -106,10 +114,11 @@ def _find_package(target: str) -> Optional[str]:
     reg = get_registry()
     for p in reg.providers:
         if p.id == target:
-            pkg = getattr(p, "pkg_dir", None)
-            if pkg:
+            # 注册表写入的是 package_dir（不是 pkg_dir）。此前读错属性名，导致
+            # PIC2EDIT_SCHEMA_DIR 里的包永远找不到，只能靠下面按 id 猜路径兜底。
+            pkg = getattr(p, "package_dir", None) or getattr(p, "pkg_dir", None)
+            if pkg and os.path.isdir(pkg):
                 return pkg
-            # Python 插件没有 pkg_dir：按 id 在两级根目录里找
             for root in (BUILTIN_ROOT, USER_ROOT):
                 cand = os.path.join(root, p.id)
                 if os.path.isdir(cand):
@@ -132,11 +141,13 @@ def cmd_list(args) -> int:
     if not items:
         print("（未发现任何 schema）")
         return 0
-    print(f"{'id':<20}{'版本':<10}{'来源':<14}{'优先级':<8}标题")
+    print(f"{'id':<20}{'版本':<10}{'来源':<12}{'优先级':<8}标题")
     for it in items:
-        print(f"{it['id']:<20}v{it['version']:<9}{it['kind']:<14}{it['priority']:<8}{it['title']}")
-        if it.get("layout"):
-            print(f"{'':<20}版式: {it['layout']}")
+        # 打印 origin（实际从哪个根目录加载）而不是 kind（包自报的类型）：
+        # 用户把内置包拷到 ~/.pic2edit/schemas 改过之后，kind 仍是 "builtin"，
+        # 只有 origin 能回答"生效的是我改的那份吗"。
+        origin = it.get("origin") or it.get("kind") or "?"
+        print(f"{it['id']:<20}v{it['version']:<9}{origin:<12}{it['priority']:<8}{it['title']}")
     errs = get_registry().errors
     if errs:
         print(f"\n有 {len(errs)} 个包未能加载：")
@@ -191,8 +202,20 @@ def _fill(template: str, sid: str, title: str) -> str:
 
 
 def cmd_new(args) -> int:
-    root = os.path.expanduser(args.dir or USER_ROOT)
+    # id 同时是目录名与注册表 key：不校验就会出现 `new ../../foo` 写到用户目录之外、
+    # 覆盖同名文件，以及一个永远无法被 `--schema <id>` 引用的怪名字。
+    if not _SAFE_ID_RE.fullmatch(args.id or ""):
+        print("id 必须是 1–32 位的 [a-z0-9_-]，且以字母开头", file=sys.stderr)
+        return 2
+    root = os.path.abspath(os.path.expanduser(args.dir or USER_ROOT))
     pkg = os.path.join(root, args.id)
+    try:
+        inside = os.path.commonpath([os.path.realpath(pkg), os.path.realpath(root)]) == os.path.realpath(root)
+    except ValueError:              # Windows 跨盘符时 commonpath 会抛
+        inside = False
+    if not inside:
+        print(f"拒绝写入根目录之外: {pkg}", file=sys.stderr)
+        return 2
     if os.path.exists(pkg) and not args.force:
         print(f"目录已存在：{pkg}（加 --force 覆盖）", file=sys.stderr)
         return 2
@@ -213,6 +236,46 @@ def cmd_new(args) -> int:
     print(f"已生成 {pkg}")
     print("下一步：改 schema.yaml 的 detect 与字段 → 放样张 → python -m schemas.cli test "
           f"{args.id}")
+    return 0
+
+
+def cmd_pack(args) -> int:
+    """把一个做好的 schema 目录打成可分发的 .zip。
+
+    为什么要打成一个包而不是"拷目录"：分发时最怕的是**半份**包——用户只拷了
+    schema.yaml 忘了 layout.html，或改完 yaml 没同步 manifest 的 version。
+    因此先跑一遍 lint（id/version/占位对账），不通过就不打包；打完后打印 sha256，
+    接收方可以核对（与引擎下载校验同一套思路）。
+    """
+    pkg = _find_package(args.target)
+    if not pkg:
+        print(f"找不到 schema: {args.target}", file=sys.stderr)
+        return 2
+    res = lint_package(pkg)
+    sid = res.get("id") or os.path.basename(pkg)
+    if not res["ok"] and not args.force:
+        print("校验未通过，未打包（修完再试，或加 --force）:")
+        _print_issues(res)
+        return 1
+
+    out = args.out or f"{sid}.zip"
+    out = os.path.abspath(out)
+    n = 0
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for root, dirs, files in os.walk(pkg):
+            dirs[:] = sorted(d for d in dirs if d not in ("__pycache__", ".git"))
+            for fn in sorted(files):
+                if fn.endswith((".pyc", ".pyo")) or fn in (".DS_Store", "Thumbs.db"):
+                    continue
+                full = os.path.join(root, fn)
+                arc = os.path.join(sid, os.path.relpath(full, pkg)).replace(os.sep, "/")
+                z.write(full, arc)
+                n += 1
+    with open(out, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    print(f"已打包 {n} 个文件 → {out}")
+    print(f"sha256: {digest}")
+    print(f"安装：解压到 {USER_ROOT}/ （顶层目录须为 {sid}/）")
     return 0
 
 
@@ -240,6 +303,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--dir", default=None, help=f"输出根目录（默认 {USER_ROOT}）")
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=cmd_new)
+
+    p = sub.add_parser("pack", help="校验后打成可分发 .zip，并打印 sha256")
+    p.add_argument("target", help="schema id 或目录")
+    p.add_argument("--out", default=None, help="输出 zip 路径（默认 <id>.zip）")
+    p.add_argument("--force", action="store_true", help="校验不通过也打包")
+    p.set_defaults(func=cmd_pack)
 
     args = ap.parse_args(argv)
     return args.func(args)

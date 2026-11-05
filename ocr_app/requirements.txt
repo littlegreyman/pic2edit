@@ -2,16 +2,26 @@
 # 主程序（GUI + Ollama 后端 + PDF/TIF 处理 + 导出）运行在 Python 3.10+。
 # RapidOCR 判别式引擎（零幻觉，纯 CPU）已升级到 rapidocr >=3.10，官方支持 Python 3.14，
 # 因此直接随主 venv 安装，无需再单独建 .venv_ocr（Python<=3.12）子环境。
-PySide6>=6.6
-pypdfium2>=4.0   # PDF 整页渲染（Apache-2.0，MIT 兼容；替换原 AGPL 的 PyMuPDF）
-Pillow>=10.0
-requests>=2.31
-markdown>=3.5
-python-docx>=1.1
-PyYAML>=6.0             # 声明式 schema（schemas/runtime.py）的唯一新增依赖；纯解析，不做模板
-huggingface_hub>=0.23   # used by download_models.bat to pull GGUF models
-rapidocr>=3.10.0        # 判别式 OCR 引擎（零幻觉，支持 Python 3.14）
-onnxruntime>=1.31       # RapidOCR 的 ONNX 推理运行时（CPU；GPU 用户可换 onnxruntime-gpu）
+#
+# 版本下限的取法：凡**把不可信文件交给原生解析器**的依赖，下限抬到"已知漏洞已修复"
+# 的那一版，而不是"能跑就行"。离线机 / 缺锁文件 / 解析器回退时，pip 会老老实实装到
+# 下限那一版——把下限写成 10.0 就等于承诺"允许装到有 RCE 的版本"。
+PySide6>=6.12,<6.13    # 6.12.0 命中 CVE-2026-105924（Qt CBOR→JSON 空指针）。
+                       # 本项目不解析 CBOR/QDom/SVG，路径不命中；官方修复版 6.12.1
+                       # 尚未发布（2026-11-06 实测 pip 最新仍为 6.12.0），发布后抬下限。
+pypdfium2>=5.14.0,<6   # PDF 整页渲染（Apache-2.0，MIT 兼容）。
+                       # 注意：5.14.0 内置 PDFium chromium/8076 仍带 CVE-2026-110155
+                       # （AGG 光栅化堆溢出），**上游暂无修复版本**，见 pypdfium2#487；
+                       # 这里只做"不降级"，缓解靠 input_prep 的子进程隔离 + README 风险声明。
+Pillow>=13.0.0,<14     # 13.0.0 修 CVE-2026-112900(9.2, EPS 参数注入 RCE) / 96778 /
+                       # 96640 / 112401；12.3.0 修 CVE-2026-59204
+requests>=2.34.2       # 2.34.2 为当前修复线；全部调用点均带 timeout
+markdown>=3.11.0       # 3.11.0 修 CVE-2019-25781（链接括号二次方回溯）等
+python-docx>=1.2.0
+PyYAML>=6.0.3          # 声明式 schema（schemas/runtime.py）的唯一新增依赖；只用 safe_load
+huggingface_hub>=0.23  # used by download_models.bat to pull GGUF models
+rapidocr>=3.10.0       # 判别式 OCR 引擎（零幻觉，支持 Python 3.14）
+onnxruntime>=1.31      # RapidOCR 的 ONNX 推理运行时（CPU；GPU 用户可换 onnxruntime-gpu）
 
 # 注意：Transformers 后端需要独立的 Python 3.11 环境（避开 3.13 缺 wheel 的问题），
 # 并在该环境中额外安装：torch(torchvision) + transformers + accelerate + bitsandbytes + einops + sentencepiece

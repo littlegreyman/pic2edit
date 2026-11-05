@@ -42,9 +42,15 @@ class SchemaProvider(Protocol):
     version: str
     #: 来源：``builtin``（随包分发）/ ``user``（用户目录）/ ``declarative``（yaml）。
     kind: str
+    #: 实际加载来源：``builtin`` / ``user``。与 ``kind`` 不同——``kind`` 是包自报的，
+    #: 用户把内置包拷到用户目录改过之后，``kind`` 仍是 ``builtin``，只有 ``origin``
+    #: 能说明「生效的是你改的那一份」。
+    origin: str
     #: 小者优先。内置发票取 100（它的 detect 恒真，必须最后兜底）。
     priority: int
-    #: 可选：版式文件名（如 ``layout.html``）。无版式时为 None。
+    #: 可选：**声明式**版式文件名（如 ``layout.html``）。无版式时为 None。
+    #: 插件式（``manifest.entry``）不要设它——它的 HTML 由 ``render_html()`` 现算，
+    #: 把 .py 写进 layout 会让"文件存在就算过"的检查把代码当模板读。
     layout: Optional[str]
 
     def detect(self, text: str, lines: Lines, width: int, height: int) -> bool:
@@ -80,6 +86,8 @@ def info_of(p: SchemaProvider) -> SchemaInfo:
         title=p.title,
         version=p.version,
         kind=p.kind,
+        origin=getattr(p, "origin", p.kind),
         priority=getattr(p, "priority", 50),
         layout=getattr(p, "layout", None),
+        path=getattr(p, "package_dir", ""),
     )

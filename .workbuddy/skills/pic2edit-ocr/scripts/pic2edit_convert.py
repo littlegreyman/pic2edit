@@ -164,7 +164,16 @@ PORT = "8080"
 READY_TIMEOUT = 240.0
 # 缓存只存"识别结果"（raw_text/lines/engine），渲染与 schema 抽取在读取时进行，
 # 因此渲染主干重构无需清缓存；命中时会补做重复护栏与 schema 抽取。
-CACHE_VERSION = "v2"
+#
+# 但**识别层**的改动（换模型、改预处理）无法在读取时重算——那些已经是 OCR 的
+# 输入而非产物。故缓存键必须含识别层参数（见 convert 里的 cache_key），
+# 否则 `--vlm-model q4` 跑完再 `--vlm-model q8` 会直接命中 Q4 的结果。
+CACHE_VERSION = "v3"
+
+#: 写缓存时剔除的键：全部是**派生数据**，必须在读取时重算。
+#: ``schema_id`` 与 ``schema_version`` 必须一起剔除——只删 ``schema`` 会留下
+#: 与 ``schema=None`` 矛盾的 id，让产物元数据自相矛盾。
+_CACHE_DROP_KEYS = ("schema", "schema_id", "schema_version")
 
 
 # --------------------------------------------------------------------------
@@ -178,9 +187,63 @@ def _sha256_file(path, chunk=1 << 20):
     return h.hexdigest()
 
 
+def _cache_root():
+    """按用户隔离的缓存目录（权限 0700）。
+
+    ``<tmp>/pic2edit_cache`` 是所有用户共享的名字：多用户机器上，另一个本地用户可以
+    预置 ``sha256(输入哈希).json``，让本次转换读到**别人伪造的识别结果**——票据场景
+    下这是实打实的数据完整性风险（金额被改写而无人察觉）。目录名带 uid + 0700 即可
+    挡住跨用户写入，Windows 无 getuid 时退回用户名。
+    """
+    if hasattr(os, "getuid"):                 # POSIX
+        who = str(os.getuid())
+    else:                                     # Windows
+        try:
+            import getpass
+            who = getpass.getuser()
+        except Exception:
+            who = "default"
+    return os.path.join(tempfile.gettempdir(), f"pic2edit_cache_{who}")
+
+
+def _cache_key_for(input_path, mode, vlm_model, skip_disc, mask_rect):
+    """计算缓存键。
+
+    **识别层参数必须进键**（模型档位 / 是否跳过判别式）：它们决定的是识别结果本身，
+    读取时无法重算，缺了它们换模型后会读到上一次的 OCR 文本。
+    而 schema 与渲染参数**不进键**——那些是派生数据，命中时现算（见 _apply_schema_stats）。
+    """
+    key = (f"{_sha256_file(input_path)}|{mode}|{CACHE_VERSION}"
+           f"|vlm:{vlm_model or settings_store.get('vlm.model', 'auto')}"
+           f"|skip:{1 if skip_disc else 0}")
+    if mask_rect is not None:
+        # 掩膜矩形参与键，确保不同掩膜参数命中不同缓存。
+        key += "|mask:" + ",".join(f"{v:.4f}" for v in mask_rect)
+    return key
+
+
+def _cache_payload(data):
+    """构造写缓存的内容。
+
+    只存**识别结果**（raw_text / lines / engine / 尺寸）。派生数据（schema 文档 /
+    schema_id / schema_version）一律剔除：否则改进抽取逻辑后，缓存命中的旧 schema 会
+    一直生效，必须 bump CACHE_VERSION 重跑 OCR 才能让修复可见。
+    三个键必须**一起**剔——只删 schema 会留下 schema_id 与 schema=None 自相矛盾的页。
+    """
+    out = dict(data)
+    out["pages"] = [{k: v for k, v in (p or {}).items() if k not in _CACHE_DROP_KEYS}
+                    for p in (data.get("pages") or [])]
+    return out
+
+
 def _cache_file(key):
-    d = os.path.join(tempfile.gettempdir(), "pic2edit_cache")
-    os.makedirs(d, exist_ok=True)
+    d = _cache_root()
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    if hasattr(os, "chmod"):                  # 目录已存在时不生效，补齐一次
+        try:
+            os.chmod(d, 0o700)
+        except OSError:
+            pass
     # key 可能含 Windows 非法文件名字符（如 |），用其哈希作文件名，避免 OSError
     return os.path.join(d, hashlib.sha256(key.encode("utf-8")).hexdigest() + ".json")
 
@@ -622,6 +685,20 @@ def _layout_table_md(p):
         return ""
 
 
+def _schema_stamp(pages):
+    """``"invoice@1.0.0"``；没有任何命中则返回空串。
+
+    产物必须能回答「按哪一版规则抽的」。只记 id 时，schema 从 1.0.0 改到 1.1.0
+    （比如补了一个字段），历史产物就无法解释两次导出为何不同。
+    """
+    seen = {}
+    for p in pages or []:
+        sid = p.get("schema_id")
+        if sid:
+            seen[sid] = p.get("schema_version") or ""
+    return "、".join(f"{k}@{v}" for k, v in sorted(seen.items()) if v)
+
+
 def _render(data, fmt, out_path, input_path, prov, mode):
     """渲染总入口：按「本页有没有命中 schema」分流，**不再按 --mode 分流**。
 
@@ -683,12 +760,19 @@ def _render(data, fmt, out_path, input_path, prov, mode):
         # 没有命中任何 schema 时，导出的 html 不该带着一套用不上的票面样式。
         # 忠实版式（原图垫底）的样式是通用的，无论有没有命中 schema 都可能用到
         extra_css = "\n".join(c for c in (schema_css(pages), faithful_css()) if c)
+        stamp = _schema_stamp(pages)
+        meta = f'<meta name="pic2edit-schema" content="{stamp}">' if stamp else ""
         text = ("<!DOCTYPE html>\n<html lang='zh-CN'><head><meta charset='utf-8'>"
-                "<title>识别结果</title>"
+                f"{meta}<title>识别结果</title>"
                 f"<style>{HTML_CSS}\n{extra_css}</style></head>"
                 "<body>\n" + "\n".join(blocks) + "\n</body></html>")
     else:
         text = "\n\n".join(blocks)
+        stamp = _schema_stamp(pages)
+        if stamp and fmt in ("md", "docx"):
+            # md/docx 用注释行记录版本：渲染后不可见，但保留了溯源信息。
+            # txt 不加——纯文本里的 HTML 注释是可见噪声。
+            text = f"<!-- schema: {stamp} -->\n\n{text}"
 
     if not out_path:
         stem = os.path.splitext(input_path)[0]
@@ -805,17 +889,49 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
         _hw = False
     sys.stderr.write(f"[screen] 手写预筛 handwritten={_hw} confidence={_hw_conf}\n")
     if _hw:
-        skip_disc = True
         sys.stderr.write("[route] 判定手写体 → 跳过 RapidOCR，直走 VLM 兜底\n")
+
+    def _apply_schema_stats(target_pages):
+        """逐页抽 schema 并写回顶层统计。
+
+        抽成函数是为了让「首次识别」与「缓存命中」两条路径**共用同一段代码**。
+        此前缓存命中分支直接把 page 交给渲染、没走这一步，于是 page["schema"] 恒为
+        None——同一份发票第一次转出票面版式、第二次（--cache）转出 OCR 原文，JSON 里的
+        ``schema.hits`` 还是缓存里的旧值。这类"两条路径各写一遍"的漏做无法靠阅读发现，
+        只能靠共用一个入口 + 测试守住。
+        """
+        st = apply_schemas(target_pages, schema_mode)
+        if st["mode"] == MODE_NONE:
+            # 「没启用」与「启用了但一个都没命中」必须能区分，否则事后无法解释
+            # 同一批文件两次导出为什么长得不一样。
+            st["note"] = "schema 未启用（--schema none）"
+        elif st["hits"]:
+            detail = "、".join(f"{k}×{v}" for k, v in st["applied"].items())
+            sys.stderr.write(
+                f"[schema] {st['hits']}/{len(target_pages)} 页命中凭证 schema（{detail}）\n")
+        else:
+            sys.stderr.write(f"[schema] 未命中任何凭证 schema（mode={st['mode']}）\n")
+        return st
+
+    # ---- 统一路由策略（必须在缓存之前算好：缓存键要含「是否跳过判别式」）----
+    # 自动规避沙箱内存限制：若本进程虚拟内存软限制受限（如 WorkBuddy 沙箱 4GB），
+    # RapidOCR/onnxruntime 加载模型会被 OOM killer 连父进程一起 SIGKILL(137)。
+    # 此时跳过判别式，直接走 VLM 兜底（依赖本机 :8080 的 llama-server）。
+    # 也可用环境变量 PIC2EDIT_SKIP_DISCRIMINATIVE=1 强制跳过。
+    # 统一路由策略收敛到 ocr_app RoutingPolicy：页面类型(table/figure/html_table) + 手写预筛
+    # + 沙箱内存受限 + 强制跳过，均跳过判别式直走 VLM 兜底；图表模式关闭幻觉守卫。
+    # 与 GUI 使用同一套规则，避免两侧行为不一致（如防伪底纹发票 GUI 缺逃生口）。
+    _force = env_force_skip()
+    _policy = RoutingPolicy.for_page_type(
+        mode, force_skip=_force, hw_detected=_hw, vmem_limited_gb=vmem_limited_gb(),
+    )
+    skip_disc = _policy.skip_discriminative
 
     # ---- A2 缓存命中：直接复用结构化结果并按请求格式渲染 ----
     cache_key = None
     if use_cache:
-        # 缓存键基于「原始输入文件哈希」而非掩膜副本，避免掩膜开关导致同图不同键；
-        # 掩膜矩形参与键，确保不同掩膜参数命中不同缓存。
-        cache_key = f"{_sha256_file(input_path)}|{mode}|{CACHE_VERSION}"
-        if mask_rect is not None:
-            cache_key += "|mask:" + ",".join(f"{v:.4f}" for v in mask_rect)
+        # 缓存键基于「原始输入文件哈希」而非掩膜副本，避免掩膜开关导致同图不同键。
+        cache_key = _cache_key_for(input_path, mode, vlm_model, skip_disc, mask_rect)
         cf = _cache_file(cache_key)
         if os.path.isfile(cf):
             try:
@@ -831,27 +947,20 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
                         if _r:
                             _pg["raw_text"] = _clean
                             _n_trim += 1
+                # schema 是派生数据：写缓存时被剔除，命中时**必须重新抽取**。
+                # 这正是缓存的设计目的——改进抽取逻辑后不用 bump CACHE_VERSION
+                # 重跑昂贵的 OCR，命中页立刻按新逻辑重新抽取。
+                data["schema"] = _apply_schema_stats(data.get("pages") or [])
                 _msg = "[cache] 命中，直接复用识别结果"
                 if _n_trim:
                     _msg += f"（对 {_n_trim} 页补做重复护栏截断）"
                 sys.stderr.write(_msg + "\n")
                 print(_render(data, fmt, out_path, input_path, prov, mode))
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                # 不静默：坏缓存悄悄退化成全量识别，会让人以为"缓存根本没生效"。
+                sys.stderr.write(f"[warn] 缓存读取失败，回退完整识别: {e}\n")
 
-    # 自动规避沙箱内存限制：若本进程虚拟内存软限制受限（如 WorkBuddy 沙箱 4GB），
-    # RapidOCR/onnxruntime 加载模型会被 OOM killer 连父进程一起 SIGKILL(137)。
-    # 此时跳过判别式，直接走 VLM 兜底（依赖本机 :8080 的 llama-server）。
-    # 也可用环境变量 PIC2EDIT_SKIP_DISCRIMINATIVE=1 强制跳过。
-    _force = env_force_skip()
-    # 统一路由策略收敛到 ocr_app RoutingPolicy：页面类型(table/figure/html_table) + 手写预筛
-    # + 沙箱内存受限 + 强制跳过，均跳过判别式直走 VLM 兜底；图表模式关闭幻觉守卫。
-    # 与 GUI 使用同一套规则，避免两侧行为不一致（如防伪底纹发票 GUI 缺逃生口）。
-    _policy = RoutingPolicy.for_page_type(
-        mode, force_skip=_force, hw_detected=_hw, vmem_limited_gb=vmem_limited_gb(),
-    )
-    skip_disc = _policy.skip_discriminative
     if skip_disc:
         sys.stderr.write("[info] 跳过判别式(RapidOCR)，仅用 VLM 兜底(需本机 :8080 的 llama-server)\n")
 
@@ -970,14 +1079,7 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
         # 三态由 --schema 决定（none / auto / <id>）：
         #   none → apply_schemas 直接返回，连 schema 键都不写；
         #   其余 → 由注册表按 priority 逐个 detect/extract，前端不认识任何具体票种。
-        stats = apply_schemas(pages, schema_mode)
-        schema_stats = stats
-        if stats["hits"]:
-            detail = "、".join(f"{k}×{v}" for k, v in stats["applied"].items())
-            sys.stderr.write(
-                f"[schema] {stats['hits']}/{len(pages)} 页命中凭证 schema（{detail}）\n")
-        elif stats["mode"] != MODE_NONE:
-            sys.stderr.write(f"[schema] 未命中任何凭证 schema（mode={stats['mode']}）\n")
+        schema_stats = _apply_schema_stats(pages)
     finally:
         if proc is not None and stop_server:
             # 经 EngineLauncher 整组回收（POSIX killpg / Windows CTRL_BREAK_EVENT），
@@ -993,10 +1095,6 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
             "vlm_fallback_invoked": bool(vlm_probe),
             "schema": schema_stats,          # 本次用了哪个 schema、命中几页（可溯源）
             "pages": pages}
-    if schema_stats["mode"] == MODE_NONE:
-        # 「没启用」与「启用了但一个都没命中」必须能区分，否则事后无法解释
-        # 同一批文件两次导出为什么长得不一样。
-        data["schema"]["note"] = "schema 未启用（--schema none）"
 
     # 原始 OCR 全文落到 LOG 目录（可追溯、可复现），**不进入任何交付物**。
     # 先按保留天数清理旧日志（静默，失败不阻断），再写本次记录。
@@ -1016,17 +1114,11 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
         sys.stderr.write(f"[log] 原始 OCR 已记录: {_log_path}\n")
 
     # 写缓存（只存识别结果：raw_text / lines / 尺寸）。
-    # schema 是派生数据，故意剔除——否则改进抽取逻辑后，缓存命中的旧 schema 会一直
-    # 生效，必须 bump CACHE_VERSION 重跑 OCR 才能让修复可见。
+    # 派生数据由 _cache_payload 统一剔除，避免"写一处、读一处"各写一遍又漏掉。
     if use_cache and cache_key:
         try:
-            _cached = dict(data)
-            _cached["pages"] = [
-                {k: v for k, v in (p or {}).items() if k != "schema"}
-                for p in (data.get("pages") or [])
-            ]
             with open(_cache_file(cache_key), "w", encoding="utf-8") as f:
-                json.dump(_cached, f, ensure_ascii=False)
+                json.dump(_cache_payload(data), f, ensure_ascii=False)
         except Exception:
             pass
     # 唯一 stdout 输出：最终文件路径，供 skill 解析后 present_files

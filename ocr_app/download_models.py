@@ -3,10 +3,13 @@
 本脚本是唯一的下载逻辑来源，可在 Windows / Linux / macOS 上运行：
   1) bin/<exe>  —— 官方预编译 llama.cpp server
                     Windows/Linux 用 CUDA 版，macOS 用 Metal 版；
-                    通过 GitHub Release API 按当前系统/架构挑选正确的资产，
-                    并带“镜像/CDN 回退”与“确定性 URL 兜底”，避免卡死在某一个源。
+                    通过 GitHub Release API 按当前系统/架构挑选正确的资产。
+                    **完整性**：已钉 SHA256 的资产可走镜像重试且必须校验通过；
+                    未钉 hash 的资产只允许从 github.com 官方域名下载（见 ENGINE_SHA256
+                    与 mirrors_for 的注释——镜像都是第三方反向代理，不可默认信任）。
   2) models/    —— DeepSeek-OCR 的 GGUF（Q4_K_M，适配 ~8GB 显存）+ mmproj，
                     通过 huggingface_hub 下载，hf.co 不通时自动切到 hf-mirror.com。
+                    该库是可选项，缺失时只提示安装命令，**不在运行时 pip install**。
 
 *.bat / *.sh 只是调用本脚本的薄壳，真正的可移植逻辑都在这里。
 """
@@ -14,6 +17,7 @@ import os
 import sys
 import glob
 import json
+import hashlib
 import shutil
 import tarfile
 import zipfile
@@ -51,6 +55,38 @@ HF_MIRRORS = [
 ]
 LIB_EXTS = (".dll", ".so", ".dylib")
 UA = {"User-Agent": "pic2edit-setup/1.0"}
+
+#: 引擎归档的 SHA256 白名单。**发布时把实测值钉进来**。
+#:
+#: 为什么必须要有它：下面 GITHUB_MIRRORS 里的三个是**第三方反向代理**。从它们
+#: 下载到的 zip 会被解压、chmod 0755、然后由 GUI 直接执行——等于把二进制的信任
+#: 静默交给了代理运营者。钉了 hash 之后，任何一方替换内容都会在这里被发现。
+#:
+#: 未钉 hash 的资产会被限制为**只从 github.com 官方域名下载**（见 mirrors_for），
+#: 并打印显著警告；镜像只用于"已钉 hash"的重试。宁可慢，也不要装一个来路不明的引擎。
+ENGINE_SHA256 = {
+    # 例（填实测值后取消注释）：
+    # "llama-b11853-bin-win-cuda-12.4-x64.zip": "0000…",
+    # "llama-b11853-bin-ubuntu-cuda-12.8-x64.tar.gz": "0000…",
+    # "llama-b11853-bin-macos-arm64.tar.gz": "0000…",
+    # "cudart-llama-bin-win-cuda-12.4-x64.zip": "0000…",
+}
+
+
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for blk in iter(lambda: f.read(1 << 20), b""):
+            h.update(blk)
+    return h.hexdigest()
+
+
+def mirrors_for(name):
+    """该资产允许使用的下载源。
+
+    已钉 hash → 全部镜像可用（内容仍会被校验）；未钉 → 只允许官方 github.com。
+    """
+    return GITHUB_MIRRORS if name in ENGINE_SHA256 else GITHUB_MIRRORS[:1]
 
 
 # ---------------- 平台识别 ----------------
@@ -169,29 +205,80 @@ def _stream(url, dest, label):
         sys.stderr.flush()
 
 
-def download_file(url, dest, label):
-    """Try each GitHub mirror in turn; return True on success."""
+def download_file(url, dest, label, name=None):
+    """Try each allowed mirror in turn; return True on success.
+
+    ``name`` 用于查 SHA256 白名单：已钉 hash 时必须校验通过，未钉则只走官方域名
+    并提示"本次未能校验完整性"。
+    """
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    for mirror in GITHUB_MIRRORS:
+    name = name or os.path.basename(url)
+    expected = ENGINE_SHA256.get(name)
+    if not expected:
+        print(f"[warn] {name} 没有钉 SHA256，只允许从 github.com 官方域名下载；"
+              "本次无法校验完整性")
+    for mirror in mirrors_for(name):
         wrapped = url.replace("https://github.com", mirror, 1) if "github.com" in url else url
         try:
             print(f"[dl] {label} <- {wrapped}")
             _stream(wrapped, dest, label)
-            if os.path.exists(dest) and os.path.getsize(dest) > 0:
-                return True
+            if not (os.path.exists(dest) and os.path.getsize(dest) > 0):
+                continue
+            if expected:
+                got = sha256_of(dest)
+                if got != expected:
+                    # 内容被替换：删掉并停止，绝不"换个镜像再试试"——
+                    # 那正是把最坏情况（被篡改的二进制）当成一次网络故障来处理。
+                    os.remove(dest)
+                    print(f"[!] 引擎校验失败（疑似被替换）：{name}\n"
+                          f"    期望 {expected[:16]}…  实得 {got[:16]}…")
+                    return False
+            return True
         except Exception as e:  # network/HTTP error -> try next mirror
             print(f"[!] mirror {mirror} failed: {e}")
     return False
 
 
 # ---------------- 解压 + 收集动态库 ----------------
+def _within(root, target):
+    try:
+        return os.path.commonpath([os.path.realpath(root), os.path.realpath(target)]) \
+            == os.path.realpath(root)
+    except ValueError:                    # Windows 跨盘符
+        return False
+
+
 def extract_archive(path, dest):
+    """解压归档，并拒绝任何"写到 dest 之外"的成员。
+
+    zip 至今没有内置防护（Zip Slip）；tar 在 Python ≤3.11 默认 ``fully_trusted``，
+    一个 ``../../`` 条目就能把文件写到安装目录之外。归档来自网络（且可能经过第三方
+    代理），所以两处都必须显式校验。
+    """
+    root = os.path.realpath(dest)
+    os.makedirs(root, exist_ok=True)
     if path.endswith(".zip"):
         with zipfile.ZipFile(path, "r") as z:
-            z.extractall(dest)
+            for m in z.infolist():
+                target = os.path.join(root, m.filename)
+                if not _within(root, target):
+                    raise RuntimeError(f"非法归档路径（疑似 Zip Slip）: {m.filename}")
+                if (m.external_attr >> 16) & 0o170000 == 0o120000:
+                    raise RuntimeError(f"归档内含符号链接，拒绝解压: {m.filename}")
+            z.extractall(root)
     elif path.endswith(".tar.gz") or path.endswith(".tgz"):
         with tarfile.open(path, "r:gz") as t:
-            t.extractall(dest)
+            for m in t.getmembers():
+                if not _within(root, os.path.join(root, m.name)):
+                    raise RuntimeError(f"非法归档路径（疑似 Zip Slip）: {m.name}")
+                if m.issym() or m.islnk():
+                    raise RuntimeError(f"归档内含链接，拒绝解压: {m.name}")
+                if not (m.isfile() or m.isdir()):
+                    raise RuntimeError(f"归档内含特殊文件，拒绝解压: {m.name}")
+            try:
+                t.extractall(root, filter="data")     # 3.12+ / 已回填的 3.10.12+
+            except TypeError:                          # 更老的解释器：上面已手工校验
+                t.extractall(root)
     else:
         raise RuntimeError(f"unsupported archive: {path}")
 
@@ -204,7 +291,16 @@ def _find_exe_under(root):
     hits = glob.glob(os.path.join(root, "**", "llama-server.exe"), recursive=True)
     if not hits:
         hits = glob.glob(os.path.join(root, "**", "llama-server"), recursive=True)
-    return sorted(hits)[0] if hits else None
+    if not hits:
+        return None
+    # 多候选时按「目录浅优先 + 路径字典序」取，而不是裸 sorted()：
+    # 后者会把 bin/ 与 bin/old/ 混在一起按字符串排序，同一台机器两次跑可能选到不同副本。
+    hits.sort(key=lambda p: (p.count(os.sep), p))
+    if len(hits) > 1:
+        print("[warn] 找到多个 llama-server，已选择最浅的一个：")
+        for h in hits[:5]:
+            print(f"       {h}")
+    return hits[0]
 
 
 def gather_libs(bin_dir):
@@ -233,20 +329,24 @@ def gather_libs(bin_dir):
 
 # ---------------- 模型下载（HF，带镜像回退） ----------------
 def ensure_hf_hub():
+    """检查 huggingface_hub 是否可用；**不在运行时 pip install**。
+
+    程序在运行时改自己的依赖树，既是一条供应链面（用哪个 index、什么版本都不受控），
+    也违反最小惊讶（用户装好的环境被悄悄改动）。缺依赖就明确告诉用户装什么。
+    """
     try:
         import huggingface_hub  # noqa: F401
         return True
     except ImportError:
-        print("[setup] installing huggingface_hub ...")
-        import subprocess
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--quiet", "huggingface_hub"]
-        )
-        return True
+        print("[!] 缺少可选依赖 huggingface_hub，无法自动下载模型。请先安装：")
+        print(f'      "{sys.executable}" -m pip install "huggingface_hub>=0.23"')
+        print("    （或手动把 GGUF + mmproj 放进 models/ 目录，见下）")
+        return False
 
 
 def download_model():
-    ensure_hf_hub()
+    if not ensure_hf_hub():
+        return False
     os.makedirs(MODELS_DIR, exist_ok=True)
     last_err = None
     for endpoint in HF_MIRRORS:

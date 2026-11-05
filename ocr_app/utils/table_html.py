@@ -8,6 +8,26 @@ import re
 from html.parser import HTMLParser
 from typing import List, Dict, Tuple, Any
 
+#: 单个跨行/跨列属性允许的最大值。VLM 幻觉出 ``rowspan="10000000"`` 会让
+#: ``layout_table`` 分配 10^7 × n 个网格单元，一次导出就能把内存打满。
+MAX_SPAN = 200
+#: 整张表的逻辑单元上限（行 × 列）。超过就放弃，不留一个"能跑但会吃光内存"的路径。
+MAX_GRID_CELLS = 200_000
+
+
+def _span(attrs: Dict[str, str], key: str) -> int:
+    """把 ``rowspan`` / ``colspan`` 解析成 1..MAX_SPAN 的整数。
+
+    ``rowspan="abc"`` 此前会让 ``int()`` 抛 ValueError，一路冒到导出的
+    ``except Exception``（用户只看到"导出失败"，没有原因）。属性来自 VLM 输出，
+    天然不可信，非法值按 1 处理而不是让整次导出失败。
+    """
+    try:
+        v = int(float(attrs.get(key, 1) or 1))
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(v, MAX_SPAN))
+
 
 class _TableParser(HTMLParser):
     def __init__(self):
@@ -37,8 +57,8 @@ class _TableParser(HTMLParser):
             text = re.sub(r"\s+", " ", text)
             cell = {
                 "text": text,
-                "rowspan": int(self._attrs.get("rowspan", 1) or 1),
-                "colspan": int(self._attrs.get("colspan", 1) or 1),
+                "rowspan": _span(self._attrs, "rowspan"),
+                "colspan": _span(self._attrs, "colspan"),
             }
             if self._cur_row is not None:
                 self._cur_row.append(cell)
@@ -77,6 +97,17 @@ def layout_table(raw_rows: List[List[Dict[str, Any]]]) -> Tuple[List[List[int]],
     """
     anchors: List[Tuple[int, int, int, int, str]] = []
     grid: List[List[int]] = []
+
+    # 先做一次规模预检：网格面积不会超过"每个单元格覆盖的单元数之和"（每个单元都要被
+    # 某个锚点填上），所以这个和就是可靠的上界。超限直接返回空表，调用方回退为
+    # 无合并单元格的表格——宁可少一个合并，也不要一次导出把机器拖死。
+    touched = 0
+    for row in raw_rows:
+        for cell in row:
+            touched += (max(1, int(cell.get("rowspan", 1) or 1))
+                        * max(1, int(cell.get("colspan", 1) or 1)))
+    if touched > MAX_GRID_CELLS:
+        return [], 0, 0, []
 
     def occupied(r, c):
         if r >= len(grid):

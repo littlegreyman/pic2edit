@@ -1,10 +1,11 @@
 """PySide6 主界面：左侧待转换文件（列表+预览），右侧可编辑 Markdown（编辑/预览）+ 导出。"""
+import html as _html
 import os
 import time
 import tempfile
 import logging
 
-from PySide6.QtCore import Qt, Signal, QObject, QThread
+from PySide6.QtCore import Qt, Signal, QObject, QThread, QUrl
 from PySide6.QtGui import QPixmap, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
@@ -26,6 +27,7 @@ from utils.input_prep import prepare_input, InputItem, InputDocument
 from utils.export_docx import save_text, md_pages_to_docx
 from utils.assemble import assemble_document
 from utils.export_formats import export_html, export_json
+from utils.html_safety import sanitize_html
 from utils import usage_log
 from utils.logging_setup import get_logger, log_env_on_error
 from utils.app_home import resource_path
@@ -884,10 +886,15 @@ class MainWindow(QMainWindow):
 
     def _render_preview(self, text):
         try:
-            html = markdown.markdown(text, extensions=["tables", "fenced_code"])
+            raw = markdown.markdown(text, extensions=["tables", "fenced_code"])
         except Exception:
-            html = f"<pre>{text}</pre>"
-        self.viewer.setHtml(html)
+            raw = f"<pre>{_html.escape(text)}</pre>"
+        # 预览的是**不可信**内容（OCR/VLM 文本，而 html_table 模式是主动让模型输出
+        # HTML）。QTextBrowser 不执行 JS，但会加载 <img src>/<link> 指向的资源——
+        # 恶意文档里的远程图片就是内连探测通道。故先白名单清洗，
+        # 再把 baseUrl 钉成 about:blank，阻断相对/本地资源解析。
+        self.viewer.document().setBaseUrl(QUrl("about:blank"))
+        self.viewer.setHtml(sanitize_html(raw))
 
     def _append_log(self, msg: str):
         self.status_log.appendPlainText(msg)

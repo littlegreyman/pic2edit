@@ -170,9 +170,17 @@ class SchemaRegistry:
         provider.title = manifest.get("title", provider.title)
         provider.version = str(manifest.get("version", provider.version))
         provider.kind = manifest.get("kind", origin)
+        # origin 记录「这个包实际是从哪个根目录加载的」，与 kind（包自报的类型）分开：
+        # 用户把内置包拷到 ~/.pic2edit/schemas 改过之后，kind 仍是 manifest 里的
+        # "builtin"，只有 origin 能说明"生效的是你改的那份"。覆盖机制的全部意义
+        # 就是让人敢改，改完必须能确认——否则机制废掉一半。
+        provider.origin = origin
+        provider.package_dir = pkg
         provider.priority = int(manifest.get("priority", getattr(provider, "priority", 50)))
+        # layout 只对**声明式**（HTML 版式）有意义；插件式的 HTML 由 render_html()
+        # 现算，不该声明 layout。这里仍兼容旧包，但 lint 会提示插件不要写 layout。
         layout = manifest.get("layout")
-        if layout:
+        if layout and not entry:
             provider.layout = layout
         return provider
 
@@ -219,23 +227,29 @@ class SchemaRegistry:
         return [target]
 
     def apply(self, pages: Sequence[Dict[str, Any]], mode: str = MODE_AUTO) -> Dict[str, Any]:
-        """对每页尝试抽取并就地写入 ``schema`` / ``schema_id``。
+        """对每页尝试抽取并就地写入 ``schema`` / ``schema_id`` / ``schema_version``。
 
         ``mode="none"`` 时**完全不碰 pages**（连键都不写）：下游据此判断
         「本次导出根本没启用 schema」，而不是「启用了但没命中」。
+
+        写 ``schema_version`` 是为了让产物能回答「这份数据是按哪一版规则抽的」。
+        schema 从 1.0.0 改到 1.1.0（比如补了一个字段）之后，历史产物若只记 id，
+        就没法解释同一批文件的两次导出为什么长得不一样。
         """
         cands = self.candidates(mode)
         stats = {"mode": mode or MODE_AUTO, "hits": 0, "pages": len(pages),
-                 "applied": {}, "errors": list(self.errors)}
+                 "applied": {}, "versions": {}, "errors": list(self.errors)}
         if (mode or MODE_AUTO) == MODE_NONE:
             return stats
         for page in pages:
-            doc, pid = self._apply_one(page, cands)
+            doc, pid, ver = self._apply_one(page, cands)
             page["schema"] = doc
             page["schema_id"] = pid
+            page["schema_version"] = ver
             if pid:
                 stats["hits"] += 1
                 stats["applied"][pid] = stats["applied"].get(pid, 0) + 1
+                stats["versions"][pid] = ver
         return stats
 
     def _apply_one(self, page: Dict[str, Any], cands: Sequence[SchemaProvider]):
@@ -253,8 +267,8 @@ class SchemaRegistry:
                              p.id, page.get("page", "?"), e)
                 continue
             if doc:
-                return doc, p.id
-        return None, None
+                return doc, p.id, str(getattr(p, "version", "") or "")
+        return None, None, None
 
     # ---------- 渲染 ----------
     def render(self, page: Dict[str, Any], fmt: str) -> str:

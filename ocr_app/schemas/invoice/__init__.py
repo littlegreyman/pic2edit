@@ -29,7 +29,10 @@ class InvoiceProvider:
     #: detect 恒真：票种判定本身依赖明细表/密码区的坐标证据，
     #: 只能在 extract 里做。因此 priority 取大值，让它最后被尝试。
     priority = 100
-    layout: Optional[str] = "html_layout.py"
+    #: 不声明 layout：``layout`` 是**声明式** schema 的 HTML 版式文件，
+    #: 而发票的票面 HTML 由 ``render_html()`` 现算（html_layout.py 是代码不是模板）。
+    #: 曾错误地写成 "html_layout.py"，让 lint / registry 把 .py 当版式文件处理。
+    layout: Optional[str] = None
 
     def __init__(self, package_dir: str = "") -> None:
         self.package_dir = package_dir or os.path.dirname(os.path.abspath(__file__))
