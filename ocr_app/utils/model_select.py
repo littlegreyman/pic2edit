@@ -183,3 +183,11 @@ if __name__ == "__main__":
     print("显存探测:", detect_gpu())
     if demo_dir:
         print(describe(choose(demo_dir)))
+
+
+# --------------------------------------------------------------------------
+# 公开别名：门面用不带歧义的名字转出。GUI 侧也按显存选模型时用它，
+# 免得 "choose" 这种过于通用的名字在 `from backend_api import *` 时撞名。
+# --------------------------------------------------------------------------
+choose_vlm = choose
+describe_vlm_choice = describe

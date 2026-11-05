@@ -21,6 +21,10 @@ GUI 与 Skill 两个前端都**只应通过本模块**访问 OCR 后端能力，
   ``schema_css``）：schema 的发现、选择、抽取、渲染。前端只知道
   「有三个态：none / auto / <id>」，不需要知道有哪些凭证类型，更不需要
   在代码里 import 它们——新增类型靠往目录里丢文件，不改前端。
+- 后端级预处理能力（``locate_password_region`` / ``apply_password_mask`` /
+  ``detect_handwriting``）与按显存选模型（``choose_vlm`` / ``describe_vlm_choice``）：
+  这些此前只存在于 skill 私有脚本里，GUI 完全没有，导致同一份输入从不同入口进来
+  得到不同结果。现统一沉到内核，两侧可共用。
 """
 from __future__ import annotations
 
@@ -44,6 +48,16 @@ from utils.export_docx import save_text, md_to_docx, md_pages_to_docx
 # 表格能力（两门户同源）
 from utils.table_utils import kv_text_to_markdown_table
 from utils.table_layout import build_table_from_lines
+
+# 后端级预处理能力（此前只存在于 skill 私有脚本里，GUI 完全没有）
+from backends.mask import (
+    locate_password_region,
+    apply_password_mask,
+    parse_mask_rect,
+    DEFAULT_VAT_RECT,
+)
+from utils.handwriting_screen import detect_handwriting
+from utils.model_select import choose_vlm, describe_vlm_choice
 
 # 凭证 schema（消费侧门面：发现 / 三态选择 / 抽取 / 渲染）
 from schemas import (
@@ -143,4 +157,12 @@ __all__ = [
     "render_schema",
     "schema_css",
     "reset_registry",
+    # 后端级预处理 / 选模型
+    "locate_password_region",
+    "apply_password_mask",
+    "parse_mask_rect",
+    "DEFAULT_VAT_RECT",
+    "detect_handwriting",
+    "choose_vlm",
+    "describe_vlm_choice",
 ]

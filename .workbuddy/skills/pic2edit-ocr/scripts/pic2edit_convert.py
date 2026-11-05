@@ -144,15 +144,19 @@ from backend_api import (  # noqa: E402
     resolve_schema,
     MODE_AUTO,
     MODE_NONE,
+    locate_password_region,
+    apply_password_mask,
+    parse_mask_rect,
+    DEFAULT_VAT_RECT,
+    detect_handwriting,
+    choose_vlm,
+    describe_vlm_choice,
 )
 
 # 手写/印刷预筛（P0 路由闸，纯 numpy + cv2 无模型；MIT 友好，独立重新实现）
-from handwriting_screen import detect_handwriting  # noqa: E402
-
-# skill 层基础设施：设置 / 原始 OCR 日志 / 按显存选模型（均纯 stdlib）
+# skill 层基础设施：设置 / 原始 OCR 日志（按显存选模型已下沉到内核，见 backend_api）
 import settings_store  # noqa: E402
 import log_store  # noqa: E402
-import model_select  # noqa: E402
 
 PORT = "8080"
 READY_TIMEOUT = 240.0
@@ -182,32 +186,6 @@ def _cache_file(key):
 # --------------------------------------------------------------------------
 # 密码区 / 防伪底纹掩膜预处理（skill 层，不动 pic2edit）
 # --------------------------------------------------------------------------
-def _parse_mask_rect(rect_str):
-    """解析 PIC2EDIT_MASK_RECT（x0,y0,x1,y1 比例）为元组；非法/缺失返回 None。"""
-    if not rect_str:
-        return None
-    try:
-        x0, y0, x1, y1 = [float(v) for v in rect_str.split(",")]
-    except Exception:
-        sys.stderr.write(f"[warn] PIC2EDIT_MASK_RECT 解析失败: {rect_str!r}，忽略掩膜\n")
-        return None
-    if not (0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0):
-        sys.stderr.write(f"[warn] PIC2EDIT_MASK_RECT 越界: {rect_str!r}，忽略掩膜\n")
-        return None
-    return (x0, y0, x1, y1)
-
-
-def _mask_copy(src, dst, rect):
-    """把 src 中 rect 比例区域涂白后存为 dst（PNG）。依赖 PIL，缺失则抛错由调用方兜底。"""
-    from PIL import Image, ImageDraw
-    im = Image.open(src).convert("RGB")
-    W, H = im.size
-    x0, y0, x1, y1 = rect
-    box = (int(x0 * W), int(y0 * H), int(x1 * W), int(y1 * H))
-    ImageDraw.Draw(im).rectangle(box, fill=(255, 255, 255))
-    im.save(dst)
-
-
 class _VlmProbe:
     """包装 VLM 后端，记录哪些图像真正走了 VLM 兜底，从而拿到逐页溯源。
 
@@ -431,11 +409,11 @@ def _trim_repetition(text, min_len=12, max_len=160, min_reps=3):
 # ==========================================================================
 # 发票结构化：密码区智能定位 + 表格/HTML 渲染（skill 层，仅读 pic2edit API）
 # ==========================================================================
-DEFAULT_VAT_RECT = (0.50, 0.20, 0.95, 0.44)  # 增值税专用/普通发票密码区通用预设
-
-
 def _rapidocr_lines(image_path):
-    """用 pic2edit 的判别式后端取带坐标的逐行结果（仅读 API，不改 pic2edit）。
+    """用 pic2edit 的判别式后端取带坐标的逐行结果。
+
+    走**公开**方法 ``ocr_image_with_lines`` 而不是私有的 ``_raw``：
+    ``_raw`` 是内部实现，改名/改签名时不会有任何告警，只会在运行期静默断掉。
 
     返回 (lines, W, H)：lines 每项含 text/x0/x1/y0/y1；失败返回 (None,0,0)。
     """
@@ -443,72 +421,13 @@ def _rapidocr_lines(image_path):
         backend = DiscriminativeBackend()
         if not backend.available():
             return None, 0, 0
-        data = backend._raw(image_path)
+        _text, data = backend.ocr_image_with_lines(image_path)
     except Exception as e:
         sys.stderr.write(f"[warn] 判别式取带坐标行框失败: {e}\n")
         return None, 0, 0
     if not data:
         return None, 0, 0
     return data.get("lines") or [], data.get("img_w") or 0, data.get("img_h") or 0
-
-
-def _is_gibberish(text):
-    """密码区字符：多为数字/特殊符号，基本无汉字。"""
-    if not text or len(text.strip()) < 4:
-        return False
-    cjk = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
-    return cjk == 0
-
-
-def _find_password_label(lines):
-    """找'密码区'竖排标签。支持整词识别或单字竖排堆叠两种情形。"""
-    # 1) 整词识别
-    exact = next((ln for ln in lines if "密码区" in ln["text"].replace(" ", "")), None)
-    if exact:
-        return exact
-    # 2) 单字竖排：在偏右上区域寻找 密/码/区 字符，按纵向堆叠定位
-    cand_chars = []
-    for ln in lines:
-        t = ln["text"].replace(" ", "")
-        if len(t) == 1 and t in "密码区":
-            cand_chars.append(ln)
-    if len(cand_chars) >= 2:
-        x1 = max(c["x1"] for c in cand_chars)
-        y0 = min(c["y0"] for c in cand_chars)
-        y1 = max(c["y1"] for c in cand_chars)
-        return {"x1": x1, "y0": y0, "y1": y1}
-    # 3) 含 密码 / 码区 的片段
-    for ln in lines:
-        t = ln["text"].replace(" ", "")
-        if "密码" in t or "码区" in t:
-            return ln
-    return None
-
-
-def _locate_password_region(image_path):
-    """智能定位密码区：先找'密码区'竖排标签，取其右侧褐色矩形；用区域内文字是否
-    均为数字/符号乱码验证；失败回退增值税通用预设。仅读 pic2edit 的 _raw。"""
-    lines, W, H = _rapidocr_lines(image_path)
-    if not (lines and W and H):
-        return DEFAULT_VAT_RECT
-    label = _find_password_label(lines)
-    if label is None:
-        return DEFAULT_VAT_RECT
-    lx1, ly0, ly1 = label["x1"], label["y0"], label["y1"]
-    h = max(ly1 - ly0, 1)
-    x0 = min(W * 0.97, lx1 + 0.002 * W)
-    # 褐色密码框宽约为竖排标签高的 3~4 倍（实测噪声框右缘约在 lx1+3.8h 处）
-    x1 = min(W * 0.965, lx1 + h * 3.8)
-    y0 = max(0, ly0 - 0.15 * h)
-    # 不越过下方「税率/金额」表头，避免误伤货物明细表
-    y1 = min(H * 0.405, ly1 + 0.15 * h)
-    cx0, cy0, cx1, cy1 = x0 / W, y0 / H, x1 / W, y1 / H
-    region = [ln["text"] for ln in lines
-              if cx0 <= (ln["x0"] + ln["x1"]) / 2 / W <= cx1
-              and cy0 <= (ln["y0"] + ln["y1"]) / 2 / H <= cy1]
-    if region and sum(_is_gibberish(t) for t in region) / len(region) >= 0.5:
-        return (cx0, cy0, cx1, cy1)
-    return DEFAULT_VAT_RECT
 
 
 # --------------------------------------------------------------------------
@@ -815,14 +734,14 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
             "避免把普票/电子发票的正文涂掉；确需掩膜设 ocr.mask_password=true）\n")
     mask_rect = None
     if mask_enabled:
-        override = _parse_mask_rect(os.environ.get("PIC2EDIT_MASK_RECT"))
+        override = parse_mask_rect(os.environ.get("PIC2EDIT_MASK_RECT"))
         if override is not None:
             mask_rect = override
             sys.stderr.write(
                 f"[info] 使用手动指定的密码区掩膜 {tuple(round(v, 3) for v in mask_rect)}\n")
         else:
             try:
-                mask_rect = _locate_password_region(input_path)
+                mask_rect = locate_password_region(input_path)
                 sys.stderr.write(
                     f"[info] 智能定位密码区掩膜 {tuple(round(v, 3) for v in mask_rect)}\n")
             except Exception as e:
@@ -834,7 +753,7 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
         _mask_tmp = os.path.join(tempfile.gettempdir(),
                                 "pic2edit_masked_" + _sha256_file(input_path)[:16] + ".png")
         try:
-            _mask_copy(input_path, _mask_tmp, mask_rect)
+            apply_password_mask(input_path, _mask_tmp, mask_rect)
             effective_input = _mask_tmp
             sys.stderr.write(
                 f"[info] 已对密码区掩膜，用掩膜副本送入 OCR: {os.path.basename(_mask_tmp)}\n")
@@ -939,14 +858,14 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
 
     # 按本机显卡显存选模型档位：8GB 卡用 q8_0（精度优先），4GB 笔记本自动降到
     # Q4_K_M（q8_0 会 OOM），无独显/显存过小则退 CPU。只换权重文件名，
-    # 不修改 pic2edit 任何代码（详见 model_select.py）。
+    # 不修改 pic2edit 任何代码（实现已下沉到内核 utils/model_select.py）。
     _models_dir = os.path.join(OCR_APP, "models")
-    _sel = model_select.choose(
+    _sel = choose_vlm(
         _models_dir,
         vlm_model or settings_store.get("vlm.model", "auto"),
         settings_store.get("vlm.gpu_layers"),
     )
-    sys.stderr.write(model_select.describe(_sel) + "\n")
+    sys.stderr.write(describe_vlm_choice(_sel) + "\n")
     _model_files = (_sel.get("model"), _sel.get("mmproj")) if _sel.get("model") else None
     if gpu_layers is None and _sel.get("gpu_layers") is not None:
         gpu_layers = _sel["gpu_layers"]

@@ -1,4 +1,6 @@
 """后台 OCR 工作线程：避免界面卡顿。"""
+import os
+
 from PySide6.QtCore import QThread, Signal
 
 from backend_api import OCRBackend, DiscriminativeBackend
@@ -7,7 +9,7 @@ from utils.logging_setup import get_logger, log_exception
 from utils.table_utils import kv_text_to_markdown_table
 from utils.table_layout import build_table_from_lines
 from backend_api import run as pipeline_run, RoutingPolicy, vmem_limited_gb, env_force_skip
-from backend_api import MODE_AUTO, apply_schemas
+from backend_api import MODE_AUTO, apply_schemas, detect_handwriting
 
 _logger = get_logger("worker")
 
@@ -41,12 +43,50 @@ class OcrWorker(QThread):
         # 与「是否启用幻觉守卫」，GUI 与 Skill 共用同一套规则（修复两侧路由不一致）。
         # 路由入参与 Skill 对齐：除页面类型外，统一注入运行环境信息（虚拟内存软限制、
         # 强制跳过环境变量），确保沙箱/受限环境下两侧路由一致。
-        # hw_detected：GUI 当前未做手写体预筛（属 Phase 3.2 后端能力下沉），传 False 等价原行为。
-        self.policy = RoutingPolicy.for_page_type(
+        #
+        # 手写预筛**逐页**做（见 _policy_for）：此前 GUI 硬编码 hw_detected=False，
+        # 而 skill 用真实预筛结果，于是同一张手写件从两个入口进来走不同分支。
+        self._static_policy = RoutingPolicy.for_page_type(
             "table" if as_table else prompt_template,
             force_skip=env_force_skip(),
             vmem_limited_gb=vmem_limited_gb(),
             hw_detected=False,
+        )
+
+    # ---------- 逐页路由 ----------
+    @staticmethod
+    def _hw_force() -> bool:
+        """手写预筛的显式开关（默认关闭，与 skill 的 settings 默认一致）。
+
+        关闭不是因为做不出来，而是因为独立盲测的误报率太高（印刷 vs 手写
+        65% 误报），盲开会把大量正常印刷件推去走会幻觉的 VLM——代价远大于收益。
+        """
+        return os.environ.get("PIC2EDIT_HW_FORCE", "").lower() in ("1", "true", "yes")
+
+    def _detect_hw(self, item: InputItem) -> bool:
+        if not self._hw_force():
+            return False
+        path = getattr(item, "image_path", "") or ""
+        if not path or path.lower().endswith((".pdf", ".tif", ".tiff")):
+            return False       # 多页影像不适用单张预筛，保守按印刷
+        try:
+            hw, conf = detect_handwriting(path)
+            _logger.info("hw screen: %s -> %s (conf=%.2f)", item.name, hw, conf)
+            return bool(hw)
+        except Exception as e:   # 缺 cv2 / 图片异常 → 保守按印刷
+            _logger.warning("hw screen failed (%s): %s", item.name, e)
+            return False
+
+    def _policy_for(self, item: InputItem):
+        """按本页的手写预筛结果取路由策略（无预筛时直接复用静态策略）。"""
+        hw = self._detect_hw(item)
+        if not hw:
+            return self._static_policy
+        return RoutingPolicy.for_page_type(
+            "table" if self.as_table else self.prompt_template,
+            force_skip=env_force_skip(),
+            vmem_limited_gb=vmem_limited_gb(),
+            hw_detected=True,
         )
 
     def run(self):
@@ -68,7 +108,7 @@ class OcrWorker(QThread):
                     # 表格模式要通知流水线走表格路径（此前恒传 markdown，表格识别永不生效）
                     mode=("table" if self.as_table else "markdown"),
                     # 路由策略（页面类型驱动）替代硬编码的 skip_discriminative/guard_hallucination
-                    policy=self.policy,
+                    policy=self._policy_for(item),
                     # 把 GUI 所选输出格式的提示词真正传给 VLM（之前被硬编码 ZH_PROMPT 屏蔽）
                     prompt=self.prompt,
                     # 把配置化的模型采样参数传给 VLM（llama.cpp 在请求 payload 中生效）
