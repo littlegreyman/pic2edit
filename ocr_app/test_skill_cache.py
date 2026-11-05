@@ -42,9 +42,13 @@ def _load_skill():
     sys.modules[spec.name] = mod
     try:
         spec.loader.exec_module(mod)
-    except (Exception, SystemExit) as e:      # 缺依赖时跳过，不让 CI 假失败
+    except (ImportError, SystemExit) as e:
+        # 只对「缺依赖 / 外部守卫退出」跳过：这类是环境问题。
+        # 其余异常（SyntaxError / NameError / AttributeError…）必须**抛出去**——
+        # 之前这里 catch Exception 一律 skip，于是 12 项缓存测试在代码真坏掉时
+        # 也只是显示 skip，全套件照样"全绿"，与这批测试要防的静默失效同源。
         sys.modules.pop(spec.name, None)
-        pytest.skip(f"skill 脚本导入失败，跳过：{e!r}")
+        pytest.skip(f"skill 脚本导入失败（环境问题），跳过：{e!r}")
     return mod
 
 
@@ -189,6 +193,80 @@ def test_cache_payload_strips_all_derived_keys(skill):
     for k in ("schema", "schema_id", "schema_version"):
         assert k not in out["pages"][0], f"{k} 是派生数据，不能进缓存"
     assert out["pages"][0]["raw_text"] == "x", "识别结果必须保留"
+
+
+def test_cache_payload_drops_run_scoped_fields(skill):
+    """``source`` 与页里的 ``image`` 都是**本次运行**的东西，缓存存它们就是留死链。
+
+    实测踩到过：同一份内容换个目录跑，``--cache`` 的 json 仍报上一次的绝对路径；
+    ``image`` 存的是临时 PNG，下次启动即失效，html 因此悄悄退化成纯文本。
+    """
+    page = {"page": 1, "raw_text": "x", "engine": "disc", "lines": [],
+            "img_w": 0, "img_h": 0, "image": "/tmp/pic2edit_abc/001.png"}
+    out = skill._cache_payload({"source": "/home/someone/secret/invoice.pdf",
+                                "pages": [page]})
+
+    assert "source" not in out, "输入路径不随内容走，缓存不该存"
+    assert "image" not in out["pages"][0], "临时底图路径不能进缓存"
+    assert out["pages"][0]["raw_text"] == "x"
+
+
+def test_json_source_is_basename_only(skill, tmp_path):
+    """json 的 source 只写文件名：完整路径会带出用户名与目录结构。"""
+    src = _fake_input(tmp_path)
+    _write_cache(skill, src, _asset_card_text())
+
+    out = tmp_path / "a.json"
+    skill.convert(src, "json", "markdown", "http://127.0.0.1:9", None, str(out),
+                  False, True, False, None, "auto")
+    data = json.loads(out.read_text(encoding="utf-8"))
+
+    assert data["source"] == "in.png"
+    assert str(tmp_path) not in json.dumps(data), "产物里不能出现输入所在的真实目录"
+
+
+# ---------------------------------------------------------------------------
+# 缓存命中不得降低 html 的保真度（2026-11-06 实测发现）
+# ---------------------------------------------------------------------------
+def test_cache_hit_html_rebuilds_faithful_layout(skill, tmp_path, monkeypatch):
+    """先 md 建缓存（只有文本）再导出 html，必须补算坐标而不是退化成纯文本。
+
+    坐标只在需要版面时才计算，所以「md 建缓存 → html」天然拿不到 ``lines``。
+    此前该路径直接掉到"识别文本（本页无坐标数据）"，日志却仍写着"按原图版面还原"。
+    """
+    from PIL import Image
+
+    src = str(tmp_path / "in.png")
+    Image.new("RGB", (200, 120), "white").save(src)
+    _write_cache(skill, src, "Total: 880.00")       # lines=[]，模拟 md 建的缓存
+
+    monkeypatch.setattr(skill, "_rapidocr_lines",
+                        lambda p: ([{"text": "Total: 880.00", "x0": 10, "x1": 120,
+                                     "y0": 10, "y1": 30}], 200, 120))
+    out = tmp_path / "a.html"
+    skill.convert(src, "html", "markdown", "http://127.0.0.1:9", None, str(out),
+                  False, True, False, None, "auto")
+    html = out.read_text(encoding="utf-8")
+
+    assert "fx-stage" in html, "缓存命中也要有原图垫底的文字层"
+    assert "本页无坐标数据" not in html
+    assert "data:image/png;base64" in html
+
+
+def test_render_html_log_reports_actual_tier(skill, tmp_path, capsys):
+    """html 的渲染日志必须报告真实档位，不能一律写"按原图版面还原"。"""
+    page = {"page": 1, "text": "abc", "raw_text": "abc", "engine": "vlm",
+            "lines": [], "img_w": 0, "img_h": 0}
+    skill._render({"pages": [page]}, "html", str(tmp_path / "a.html"), "x.png", False, "markdown")
+    assert "纯文本×1" in capsys.readouterr().err
+
+    page2 = dict(page, image=str(tmp_path / "p.png"), lines=[{"text": "abc"}],
+                 img_w=100, img_h=50)
+    from PIL import Image
+
+    Image.new("RGB", (100, 50), "white").save(page2["image"])
+    skill._render({"pages": [page2]}, "html", str(tmp_path / "b.html"), "x.png", False, "markdown")
+    assert "原图垫底×1" in capsys.readouterr().err
 
 
 def test_cache_key_includes_recognition_params(skill, tmp_path):

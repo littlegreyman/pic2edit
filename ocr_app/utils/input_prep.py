@@ -26,6 +26,18 @@ except ImportError:
 PDF_AVAILABLE = pdfium is not None
 
 
+class InputPrepError(Exception):
+    """输入文件无法拆页/解码（损坏、扩展名与实际格式不符、加密 PDF 等）。
+
+    单独一种异常类型，是为了让两个入口都能给**人话提示**而不是把 Pillow 的
+    ``UnidentifiedImageError`` 原样抛给用户：
+    - GUI 在文件列表里把该文件标为失败并弹一句原因；
+    - CLI 打印 ``[error] …`` 并返回非零，批量时其余文件继续。
+    此前 ``.png`` 存的是文本（下载中断的残缺文件）会让整个进程带着
+    Pillow 的栈退出去，用户看不到"哪个文件坏了"。
+    """
+
+
 class InputItem:
     def __init__(self, name: str, image_path: str, source: str):
         self.name = name          # 列表显示名，如 "doc.pdf - 第1页"
@@ -70,8 +82,13 @@ def _safe_name(base: str, n: int) -> str:
 def prepare_image(path: str, work_dir: str) -> List[InputDocument]:
     name = os.path.basename(path)
     dst = os.path.join(work_dir, _safe_name(os.path.splitext(name)[0], 1))
-    with Image.open(path) as im:
-        im.convert("RGB").save(dst, "PNG")
+    try:
+        with Image.open(path) as im:
+            im.convert("RGB").save(dst, "PNG")
+    except (OSError, ValueError, Image.DecompressionBombError) as e:
+        raise InputPrepError(
+            f"无法解码图片：{name}（文件损坏、为空，或扩展名与实际格式不符）"
+        ) from e
     item = InputItem(f"{name}", dst, path)
     return [InputDocument(source_path=path, name=name, pages=[item])]
 
@@ -81,12 +98,15 @@ def prepare_tif(path: str, work_dir: str) -> list:
     base = os.path.splitext(name)[0]
     items = []
     n = 0
-    with Image.open(path) as im:
-        for frame in ImageSequence.Iterator(im):
-            n += 1
-            dst = os.path.join(work_dir, _safe_name(base, n))
-            frame.convert("RGB").save(dst, "PNG")
-            items.append(InputItem(f"{name} - 第{n}帧", dst, path))
+    try:
+        with Image.open(path) as im:
+            for frame in ImageSequence.Iterator(im):
+                n += 1
+                dst = os.path.join(work_dir, _safe_name(base, n))
+                frame.convert("RGB").save(dst, "PNG")
+                items.append(InputItem(f"{name} - 第{n}帧", dst, path))
+    except (OSError, ValueError, Image.DecompressionBombError) as e:
+        raise InputPrepError(f"无法解码 TIFF：{name}（文件损坏或为空）") from e
     if not items:  # 单页兜底
         return prepare_image(path, work_dir)
     return [InputDocument(source_path=path, name=name, pages=items)]
@@ -104,7 +124,10 @@ def prepare_pdf(path: str, work_dir: str, dpi: int = 200) -> list:
     name = os.path.basename(path)
     base = os.path.splitext(name)[0]
     items = []
-    doc = pdfium.PdfDocument(path)
+    try:
+        doc = pdfium.PdfDocument(path)
+    except Exception as e:      # pypdfium2 的 PdfiumError 不保证是 OSError 子类
+        raise InputPrepError(f"无法打开 PDF：{name}（文件损坏、加密或不是 PDF）") from e
     scale = dpi / 72.0  # pypdfium2 的 scale=1 对应 72 DPI
     for i in range(len(doc)):
         page = doc[i]
@@ -114,6 +137,8 @@ def prepare_pdf(path: str, work_dir: str, dpi: int = 200) -> list:
         pil.save(dst, "PNG")
         items.append(InputItem(f"{name} - 第{i + 1}页", dst, path))
     doc.close()
+    if not items:
+        raise InputPrepError(f"PDF 里没有可渲染的页面：{name}")
     return [InputDocument(source_path=path, name=name, pages=items)]
 
 

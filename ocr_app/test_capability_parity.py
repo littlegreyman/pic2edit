@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Phase 3.3：能力下沉后的"两侧能力对等"测试。
+"""能力对等测试：两个前端不能一边有一边没有。
 
-这三项能力此前只存在于 skill 私有脚本里，GUI 完全没有：
-  ① 手写/印刷预筛（GUI 硬编码 hw_detected=False，手写页两侧路由可分歧）；
-  ② 按显存选模型（GUI 只会用 discover() 的默认权重）；
-  ③ 密码区掩膜（GUI 侧有 bug 时根本无法掩膜）。
+第一批（Phase 3.3）是 skill → GUI 的三项：手写预筛、按显存选模型、密码区掩膜。
+第二批（2026-11-06 审查）是 GUI → skill 的三项，当时**一项都没补**：
+  ④ `html_table` 模式（合并单元格表格）在 CLI 不可达；
+  ⑤ 采样参数（temperature / repeat-penalty / repeat-last-n / max-tokens）不可调；
+  ⑥ 引擎失败诊断（显存预检 + 引擎输出落盘 + 平台化提示）缺失，
+     同一台机器同一次 exit -6，GUI 给出"需 2.6GB、空闲 1.0GB"，skill 只给退出码。
 
-下沉后它们的**实现**在内核（utils/ + backends/），两个前端经门面调用。
-本测试守三件事：门面确实可用、行为与原先一致、skill 里不再有重复实现。
+下沉后实现全在内核（utils/ + backends/），两个前端经门面调用。
+本测试守三件事：门面确实可用、行为一致、skill 里不再有重复实现。
 """
 from __future__ import annotations
 
@@ -22,6 +24,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import backend_api as api
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SKILL = os.path.join(_HERE, "..", ".workbuddy", "skills", "pic2edit-ocr",
+                      "scripts", "pic2edit_convert.py")
+
+
+def _skill_source() -> str:
+    if not os.path.isfile(_SKILL):
+        pytest.skip("skill 脚本不在当前检出中")
+    return open(_SKILL, encoding="utf-8").read()
+
 
 # ------------------------------------------------------------------ 门面
 def test_facade_exposes_sunk_capabilities():
@@ -29,6 +41,79 @@ def test_facade_exposes_sunk_capabilities():
                  "locate_password_region", "apply_password_mask",
                  "parse_mask_rect", "DEFAULT_VAT_RECT"):
         assert hasattr(api, name), f"门面缺少 {name}"
+
+
+def test_facade_exposes_engine_diagnostics():
+    """引擎诊断必须能从门面拿到——skill 只被允许 import 门面。"""
+    for name in ("ensure_engine", "EngineHandle", "EngineBootError",
+                 "free_vram_mib", "estimate_vram_mib"):
+        assert hasattr(api, name), f"门面缺少 {name}"
+
+
+def test_facade_exposes_prompt_and_params():
+    """提示词与采样参数属于识别策略，应由内核提供，前端不各写一份。"""
+    assert "html_table" in api.list_modes()
+    assert api.prompt_for_mode("html_table") != api.prompt_for_mode("markdown")
+    assert hasattr(api.prompt_for_mode("nope"), "lower"), "未知 mode 应回退默认而不是抛错"
+
+    mp = api.make_model_params(temperature=0.3)
+    assert mp.temperature == 0.3
+    assert mp.repeat_penalty == 1.10 and mp.repeat_last_n == 4096
+    assert api.make_model_params(max_tokens=None).max_tokens == 16384
+
+
+# ------------------------------------------------------------------ ④ 合并单元格表格
+def test_skill_accepts_html_table_mode():
+    src = _skill_source()
+    assert "list_modes()" in src, "点 --mode 的 choices 应来自门面，避免再漏掉新格式"
+    assert api.prompt_for_mode("html_table") in src or "prompt_for_mode" in src, \
+        "必须把 mode 对应的提示词真正传给流水线，否则 html_table 只是改了个路由"
+
+
+def test_skill_passes_prompt_to_pipeline():
+    """--mode 必须改变提示词：此前恒用默认 ZH_PROMPT，html_table 的实际要求没传下去。"""
+    src = _skill_source()
+    assert "prompt=prompt_for_mode(mode)" in src
+
+
+# ------------------------------------------------------------------ ⑤ 采样参数
+def test_skill_exposes_sampling_flags():
+    src = _skill_source()
+    for flag in ("--temperature", "--repeat-penalty", "--repeat-last-n", "--max-tokens"):
+        assert flag in src, f"skill 缺少 {flag}"
+    assert "make_model_params(" in src
+
+
+def test_skill_passes_model_params_to_vlm():
+    src = _skill_source()
+    assert "_VlmProbe(url, \"deepseek-ocr\", model_params)" in src, \
+        "采样参数必须同时给到 VLM 后端（请求 payload），而不只是启动命令行"
+    assert "model_params=model_params" in src, "启动命令行也要带上重复惩罚等参数"
+
+
+# ------------------------------------------------------------------ ⑥ 引擎诊断
+def test_skill_uses_shared_engine_boot():
+    """不得再自己 Popen 并把引擎输出 DEVNULL 掉。"""
+    src = _skill_source()
+    assert "ensure_engine(" in src
+    assert "stdout=subprocess.DEVNULL" not in src, "引擎输出被丢弃就永远看不到 CUDA 报错"
+    assert "EngineBootError" in src
+
+
+def test_ensure_engine_reports_vram_shortage_before_launch(monkeypatch):
+    """显存不足要在拉起前就给出可操作的说明，而不是等 ggml SIGABRT。"""
+    from backends import engine_boot as B
+
+    monkeypatch.setattr(B._engine_cli, "discover",
+                        lambda: ("/bin/true", "/x/m.gguf", "/x/mm.gguf"))
+    monkeypatch.setattr(B, "estimate_vram_mib", lambda m, mm: 2600)
+    monkeypatch.setattr(B, "free_vram_mib", lambda: 1000)
+    monkeypatch.setattr(B, "probe", lambda url, timeout=2.0: False)
+
+    with pytest.raises(B.EngineBootError) as ei:
+        B.ensure_engine("http://127.0.0.1:9", timeout=1)
+    msg = str(ei.value)
+    assert "显存" in msg and "Ollama" in msg
 
 
 # ------------------------------------------------------------------ 掩膜

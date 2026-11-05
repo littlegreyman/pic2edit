@@ -1,9 +1,33 @@
-"""Build transparent glyph + horizontal wordmark lockup from the generated assets."""
+"""Build transparent glyph + horizontal wordmark lockup from the generated assets.
+
+构建期辅助脚本，不参与运行时。源图（GLYPH）是外部生成的素材、未入库，
+所以本脚本只对维护者可用：缺源图时给出明确提示而不是抛栈。
+"""
+import os
+import sys
+
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = os.path.dirname(os.path.abspath(__file__))  # 脚本所在目录（项目根），避免硬编码个人路径
-GLYPH = f"{ROOT}/Minimal_software_logo_GLYPH_wi_2026-10-25T10-41-17.png"
-FONT = "C:/Windows/Fonts/arialbd.ttf"  # bold, clean latin wordmark
+GLYPH = os.path.join(ROOT, "Minimal_software_logo_GLYPH_wi_2026-10-25T10-41-17.png")
+
+#: 粗体无衬线字体候选。此前只写死 C:/Windows/... —— 非 Windows 上一跑就崩。
+_FONT_CANDIDATES = (
+    "C:/Windows/Fonts/arialbd.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+)
+
+
+def _pick_font(size):
+    for path in _FONT_CANDIDATES:
+        if os.path.isfile(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:      # 字体文件存在但损坏/不可解析
+                continue
+    return ImageFont.load_default(size)
 
 
 def white_to_transparent(src_path, dst_path):
@@ -33,7 +57,7 @@ def horizontal_lockup(glyph_png, dst_path):
     gw = int(glyph.size[0] * gh / glyph.size[1])
     glyph = glyph.resize((gw, gh), Image.LANCZOS)
 
-    font = ImageFont.truetype(FONT, 150)
+    font = _pick_font(150)
     word = "pic2edit"
     tmp = Image.new("RGBA", (10, 10))
     d = ImageDraw.Draw(tmp)
@@ -60,6 +84,8 @@ def horizontal_lockup(glyph_png, dst_path):
 
 
 if __name__ == "__main__":
-    white_to_transparent(GLYPH, f"{ROOT}/pic2edit-logo-transparent.png")
-    horizontal_lockup(f"{ROOT}/pic2edit-logo-transparent.png",
-                      f"{ROOT}/pic2edit-logo-horizontal.png")
+    if not os.path.isfile(GLYPH):
+        sys.exit(f"缺少源图：{GLYPH}\n该素材未入库，需先自行生成；已发布的 logo png 可直接使用。")
+    white_to_transparent(GLYPH, os.path.join(ROOT, "pic2edit-logo-transparent.png"))
+    horizontal_lockup(os.path.join(ROOT, "pic2edit-logo-transparent.png"),
+                      os.path.join(ROOT, "pic2edit-logo-horizontal.png"))

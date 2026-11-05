@@ -44,10 +44,17 @@ from backends import (
 )
 from backends.routing import RoutingPolicy, vmem_limited_gb, env_force_skip
 from backends.server_launcher import ServerStarter
+from backends.engine_boot import (
+    EngineBootError,
+    EngineHandle,
+    ensure_engine,
+    estimate_vram_mib,
+    free_vram_mib,
+)
 from engine_launcher import EngineLauncher
 
 # 输入适配与导出（原先由前端直连 utils.*，现收敛到门面）
-from utils.input_prep import prepare_input, InputItem, InputDocument
+from utils.input_prep import prepare_input, InputItem, InputDocument, InputPrepError
 from utils.export_docx import save_text, md_to_docx, md_pages_to_docx
 
 # 表格能力（两门户同源）
@@ -117,6 +124,42 @@ def build_engine_command(exe: str, model: str, mmproj: "str | None",
     """
     return _engine_cli.build_command(exe, model, mmproj, model_params)
 
+
+def prompt_for_mode(mode: str) -> str:
+    """取某个输出格式（markdown/ocr/figure/table/html_table）对应的提示词模板。
+
+    为什么经门面而不是让前端 ``import config``：提示词属于**识别策略**，与采样参数
+    一样是内核的选择；前端只需要"我要 table 格式"，不该各自维护一份模板表。
+    """
+    from config import PROMPT_TEMPLATES
+
+    return PROMPT_TEMPLATES.get(mode) or PROMPT_TEMPLATES["markdown"]
+
+
+def make_model_params(**overrides) -> "ModelParams":
+    """构造 ``ModelParams``，未给出的键取已验证的不退化默认值。
+
+    Args:
+        **overrides: 仅接受 ``ModelParams`` 已有字段；``None`` 表示"用默认"。
+
+    Returns:
+        ``config.ModelParams`` 实例。
+    """
+    from config import ModelParams
+
+    mp = ModelParams()
+    for key, val in overrides.items():
+        if val is not None and hasattr(mp, key):
+            setattr(mp, key, val)
+    return mp
+
+
+def list_modes() -> list:
+    """可选的输出格式（``--mode`` 的取值），供 CLI 生成 choices / help。"""
+    from config import PROMPT_LABELS
+
+    return list(PROMPT_LABELS.keys())
+
 # 兼容旧调用名：部分前端习惯用 pipeline_run 指代统一流水线入口。
 pipeline_run = run
 
@@ -154,6 +197,7 @@ __all__ = [
     "TableRecognizer",
     # 输入适配 / 导出
     "prepare_input",
+    "InputPrepError",       # 输入不可解码：两个前端都该给人话提示而非 Pillow 栈
     "InputItem",
     "InputDocument",
     "save_text",
@@ -170,6 +214,15 @@ __all__ = [
     # 引擎 CLI 适配
     "discover_engine",
     "build_engine_command",
+    "prompt_for_mode",
+    "make_model_params",
+    "list_modes",
+    # 引擎生命周期与诊断（GUI / Skill 共用同一实现，避免诊断质量差一个数量级）
+    "ensure_engine",
+    "EngineHandle",
+    "EngineBootError",
+    "free_vram_mib",
+    "estimate_vram_mib",
     # 凭证 schema
     "MODE_NONE",
     "MODE_AUTO",

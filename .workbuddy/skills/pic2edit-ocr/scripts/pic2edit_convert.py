@@ -49,8 +49,6 @@ import argparse
 import os
 import re
 import sys
-import time
-import subprocess
 import tempfile
 import hashlib
 import json
@@ -127,16 +125,19 @@ from backend_api import (  # noqa: E402
     DiscriminativeBackend,
     pipeline_run,
     RoutingPolicy,
-    EngineLauncher,
+    ensure_engine,
+    EngineBootError,
     vmem_limited_gb,
     env_force_skip,
     prepare_input,
+    InputPrepError,
     save_text,
     md_to_docx,
     kv_text_to_markdown_table,
     build_table_from_lines,
-    discover_engine,
-    build_engine_command,
+    prompt_for_mode,
+    make_model_params,
+    list_modes,
     list_schemas,
     apply_schemas,
     render_schema,
@@ -161,7 +162,6 @@ import settings_store  # noqa: E402
 import log_store  # noqa: E402
 
 PORT = "8080"
-READY_TIMEOUT = 240.0
 # 缓存只存"识别结果"（raw_text/lines/engine），渲染与 schema 抽取在读取时进行，
 # 因此渲染主干重构无需清缓存；命中时会补做重复护栏与 schema 抽取。
 #
@@ -173,7 +173,11 @@ CACHE_VERSION = "v3"
 #: 写缓存时剔除的键：全部是**派生数据**，必须在读取时重算。
 #: ``schema_id`` 与 ``schema_version`` 必须一起剔除——只删 ``schema`` 会留下
 #: 与 ``schema=None`` 矛盾的 id，让产物元数据自相矛盾。
-_CACHE_DROP_KEYS = ("schema", "schema_id", "schema_version")
+#: ``image`` 是本次拆页产生**临时 PNG 的路径**，缓存里存下来下次启动就是死链；
+#: 它也不是识别结果，导出 html 时按需重建（见 _attach_page_images）。
+#: ``source`` 同理由 _cache_payload 在顶层剔除：同一份内容换个路径跑，
+#: 元数据不该还报上一次的路径。
+_CACHE_DROP_KEYS = ("schema", "schema_id", "schema_version", "image")
 
 
 # --------------------------------------------------------------------------
@@ -231,9 +235,66 @@ def _cache_payload(data):
     三个键必须**一起**剔——只删 schema 会留下 schema_id 与 schema=None 自相矛盾的页。
     """
     out = dict(data)
+    out.pop("source", None)        # 只随本次运行存在，不随内容走
     out["pages"] = [{k: v for k, v in (p or {}).items() if k not in _CACHE_DROP_KEYS}
                     for p in (data.get("pages") or [])]
     return out
+
+
+def _attach_page_images(pages, source_path):
+    """给每页补上底图路径（``page["image"]``）。缓存命中导出 html 时必需。
+
+    ``image`` 既不是识别结果、也不是派生数据，而是"这次交付的原件长什么样"：
+    首跑时由 ``prepare_input`` 拆出的临时 PNG 填进来，缓存里刻意不存。
+    缺了它，``--cache --format html`` 会从「原图垫底 + 坐标文字层」静默退化成
+    「纯文本重排」——同一份输入、同一个请求，产物却与首跑不同（2026-11-06 实测发现）。
+    底图重建失败不阻断主流程：退回重排，但要在 stderr 说清楚。
+    """
+    if not pages or all(p.get("image") for p in pages):
+        return
+    try:
+        docs = prepare_input(source_path, tempfile.mkdtemp(prefix="pic2edit_img_"))
+    except (InputPrepError, OSError) as e:
+        sys.stderr.write(f"[warn] 缓存命中但无法重建底图，html 将退化为文本重排: {e}\n")
+        return
+    imgs = [it.image_path for d in docs for it in d.pages]
+    for i, p in enumerate(pages):
+        if i < len(imgs) and not p.get("image"):
+            p["image"] = imgs[i]
+
+
+def _ensure_page_lines(pages, source_path, keep_image):
+    """缓存命中时补齐版面还原所需的**坐标**（必要时连底图一起带上）。
+
+    坐标属于识别层数据，但只有需要版面的请求（html / json / table）才会算
+    （见 convert 里的 ``need_lines``）。于是「先 --format md 建缓存、再 --format html」
+    会命中一份 ``lines=[]`` 的缓存，产物从「原图垫底」退化成「纯文本」——
+    同一份输入，走缓存与不走缓存结果不同。这里按需补算并回写缓存，
+    让 ``--cache`` 不再降低保真度。``keep_image=False`` 时用完即删底图，
+    避免临时路径混进 json 产物。
+    """
+    if not pages:
+        return 0
+    _attach_page_images(pages, source_path)
+    got = 0
+    for p in pages:
+        if p.get("lines"):
+            continue
+        imgp = p.get("image")
+        if not imgp or not os.path.isfile(imgp):
+            continue
+        try:
+            lines, W, H = _rapidocr_lines(imgp)
+        except Exception as e:
+            sys.stderr.write(f"[warn] 补算页面坐标失败，本页将退化为文本重排: {e}\n")
+            continue
+        if lines:
+            p["lines"], p["img_w"], p["img_h"] = lines, W, H
+            got += 1
+    if not keep_image:
+        for p in pages:
+            p.pop("image", None)
+    return got
 
 
 def _cache_file(key):
@@ -258,8 +319,8 @@ class _VlmProbe:
     不改变 ocr_app 任何逻辑。
     """
 
-    def __init__(self, url, model):
-        self._real = LlamaCppBackend(url.rstrip("/"), model)
+    def __init__(self, url, model, model_params=None):
+        self._real = LlamaCppBackend(url.rstrip("/"), model, model_params)
         self.called = set()
 
     def available(self):
@@ -284,65 +345,38 @@ def _table_available():
 
 
 
-def ensure_server(url, gpu_layers, model_files=None):
-    """若服务未就绪则拉起 llama.cpp 服务；返回 (backend, proc_or_None)。
+def ensure_server(url, gpu_layers, model_files=None, model_params=None):
+    """确保本地引擎可用；必要时拉起。返回 ``(backend, handle)``。
+
+    实现已下沉到内核 ``backends/engine_boot.ensure_engine``，与 GUI 的
+    ``ServerStarter`` **共用**同一套「显存预检 → 拉起 → 输出落盘 → 失败提示」。
+    此前 skill 自己 Popen 且 ``stdout=DEVNULL``：同一台机器同一次显存不足，
+    GUI 会说"需 2.6GB、空闲 1.0GB、可能被 Ollama 占用"，而 skill 只回一个
+    ``code=-6``——诊断质量差一个数量级。
 
     Args:
         url: 服务地址。
         gpu_layers: 强制 GPU 层数；None 表示交给 llama.cpp 自行决定。
         model_files: ``(model_path, mmproj_path)``，由 :mod:`model_select` 按显存选定。
-            **只替换传给 pic2edit ``build_command()`` 的两个权重文件名**，不修改
-            pic2edit 的任何代码；为 None 或某项为空时沿用它的 ``discover()`` 默认。
+        model_params: 采样参数（决定 ``--repeat-penalty`` / ``--repeat-last-n``）。
+
+    Returns:
+        ``(backend, handle)``；``handle.proc`` 为 None 表示沿用了已在运行的服务，
+        ``handle.stop()`` 不会去关别人的进程。
     """
     base = url.rstrip("/")
-    backend = LlamaCppBackend(base, "deepseek-ocr")
-    if backend.available():
-        # 已有服务在跑：无法确认它加载的是哪个量化，提示一句便于排查精度差异
-        sys.stderr.write("[model] 检测到已有服务在运行，沿用其已加载的模型（本次不切换）\n")
-        return backend, None
-    exe, model, mmproj = discover_engine()
-    if model_files:
-        _m, _mp = model_files
-        if _m:
-            model = _m
-        if _mp:
-            mmproj = _mp
-    if not exe:
-        sys.stderr.write("[error] 未找到 llama-server，请先运行 download_models 部署引擎。\n")
-        sys.exit(1)
-    if not model:
-        sys.stderr.write("[error] 未找到 GGUF 模型，请先下载模型权重。\n")
-        sys.exit(1)
-    cmd = build_engine_command(exe, model, mmproj)
-    if gpu_layers is not None:
-        cmd += ["--n-gpu-layers", str(gpu_layers)]
-    print(f"[launch] {' '.join(cmd)}", file=sys.stderr)
-    # 用 EngineLauncher 拉起：置于独立进程组，关停时可整组回收，
-    # 消除 llama-server worker 子进程变孤儿持续占显存的隐患（等价原 Popen，仅更稳健）。
-    _el = EngineLauncher()
-    proc = _el.start(cmd, cwd=OCR_APP,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-    deadline = time.time() + READY_TIMEOUT
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            sys.stderr.write(f"[error] 引擎进程异常退出，code={proc.poll()}\n")
-            sys.exit(1)
-        if backend.available():
-            print("[ok] 引擎就绪", file=sys.stderr)
-            return backend, proc
-        time.sleep(2)
-    sys.stderr.write("[error] 引擎在超时内未就绪（检查 CUDA / 模型路径）\n")
-    # 「自拉起则负责关停」必须覆盖超时退出路径：此处 proc 尚未返回给调用方，
-    # 调用方的 finally 拿不到它（proc 仍为 None），不在这里回收就会留下常驻引擎占显存。
+    backend = LlamaCppBackend(base, "deepseek-ocr", model_params)
     try:
-        _el.stop(proc)
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            _el.kill(proc)
-    except Exception:
-        pass
-    sys.exit(1)
+        handle = ensure_engine(base, model_files=model_files,
+                               gpu_layers=gpu_layers, model_params=model_params)
+    except EngineBootError as e:
+        sys.stderr.write(f"[error] {e}\n")
+        sys.exit(1)
+    if handle.started:
+        print("[ok] 引擎就绪", file=sys.stderr)
+    else:
+        sys.stderr.write("[model] 检测到已有服务在运行，沿用其已加载的模型（本次不切换）\n")
+    return backend, handle
 
 
 def _safe_path(p):
@@ -644,20 +678,24 @@ def _html_faithful_block(page):
       3. 连坐标都没有（走 VLM 路径）：直接呈现识别文本。
 
     注意 1 需要 ``page["image"]``；只在导出 html 时才会被填进来（见 convert）。
+
+    返回 ``(html_fragment, tier)``：tier 用于在 stderr 如实报告走了哪一档。
+    以前调用方只看到"非空就算成功"，于是缓存命中退化到第 3 档时日志仍写着
+    "按原图版面还原"——日志和产物不符比没有日志更坏。
     """
     overlay = page_with_image(page, uid=f"p{page.get('page', 0)}",
                               title=f"第 {page.get('page', '?')} 页")
     if overlay:
-        return f"<section>{overlay}</section>"
+        return f"<section>{overlay}</section>", "原图垫底"
     lines = page.get("lines") or []
     W, H = page.get("img_w") or 0, page.get("img_h") or 0
     if lines and W and H:
         tbl = _build_page_table(lines, W, H)
         if tbl:
-            return f"<section><h2>按 OCR 坐标还原版面</h2>{tbl}</section>"
+            return f"<section><h2>按 OCR 坐标还原版面</h2>{tbl}</section>", "坐标表格"
     raw = page.get("raw_text") or page.get("text") or ""
     return ("<section><h2>识别文本（本页无坐标数据，无法还原版面）</h2>"
-            f"<pre>{_esc_html(raw)}</pre></section>")
+            f"<pre>{_esc_html(raw)}</pre></section>"), "纯文本"
 
 
 def _layout_table_md(p):
@@ -726,6 +764,7 @@ def _render(data, fmt, out_path, input_path, prov, mode):
 
     blocks = []
     schema_pages = 0
+    tiers = {}          # html 各页实际走的档位计数（日志要说真话）
     for p in pages:
         raw = p.get("raw_text") or p.get("text") or ""
         if not raw.strip():
@@ -739,8 +778,12 @@ def _render(data, fmt, out_path, input_path, prov, mode):
             schema_pages += 1
 
         if fmt == "html":
-            blk = (f"<section>{render_schema(p, 'html')}</section>" if doc
-                   else _html_faithful_block(p))
+            if doc:
+                blk = f"<section>{render_schema(p, 'html')}</section>"
+                tiers["严格按 schema"] = tiers.get("严格按 schema", 0) + 1
+            else:
+                blk, _tier = _html_faithful_block(p)
+                tiers[_tier] = tiers.get(_tier, 0) + 1
         elif fmt == "txt":
             blk = render_schema(p, "txt") if doc else raw
         elif doc:
@@ -783,14 +826,21 @@ def _render(data, fmt, out_path, input_path, prov, mode):
     else:
         save_text(text, out_path)
 
-    sys.stderr.write(
-        f"[render] 命中凭证 schema {schema_pages}/{len(blocks)} 页 → "
-        f"{'严格按 schema 输出' if schema_pages else '按原图版面还原'}\n")
+    if fmt == "html":
+        # 如实报告每页走了哪一档：以前只按"命中几页 schema"猜一句，
+        # 缓存命中退化到纯文本时日志仍写"按原图版面还原"。
+        detail = "、".join(f"{k}×{v}" for k, v in tiers.items()) or "无内容页"
+        sys.stderr.write(f"[render] html 共 {len(blocks)} 页：{detail}\n")
+    else:
+        sys.stderr.write(
+            f"[render] 命中凭证 schema {schema_pages}/{len(blocks)} 页 → "
+            f"{'严格按 schema 输出' if schema_pages else '按文本/表格版式还原'}\n")
     return out_path
 
 
 def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
-            use_cache, prov, vlm_model=None, schema_mode=MODE_AUTO):
+            use_cache, prov, vlm_model=None, schema_mode=MODE_AUTO,
+            model_params=None):
     input_path = _safe_path(input_path)
     if not os.path.isfile(input_path):
         sys.stderr.write(f"[error] 输入文件不存在: {input_path}\n")
@@ -951,6 +1001,20 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
                 # 这正是缓存的设计目的——改进抽取逻辑后不用 bump CACHE_VERSION
                 # 重跑昂贵的 OCR，命中页立刻按新逻辑重新抽取。
                 data["schema"] = _apply_schema_stats(data.get("pages") or [])
+                # source 是本次运行的输入（缓存里不存），按当前路径重写；
+                # 导出 html 还需要底图与坐标——缓存不存临时路径，这里按页重建/补算。
+                data["source"] = os.path.basename(input_path)
+                _pages = data.get("pages") or []
+                if fmt == "html" or fmt == "json" or mode == "table":
+                    _got = _ensure_page_lines(_pages, effective_input,
+                                              keep_image=(fmt == "html"))
+                    if _got:
+                        sys.stderr.write(f"[cache] 补算 {_got} 页坐标（原缓存只有文本）\n")
+                        try:
+                            with open(cf, "w", encoding="utf-8") as _f:
+                                json.dump(_cache_payload(data), _f, ensure_ascii=False)
+                        except Exception:
+                            pass    # 回写失败只是下次再补算，不影响本次产物
                 _msg = "[cache] 命中，直接复用识别结果"
                 if _n_trim:
                     _msg += f"（对 {_n_trim} 页补做重复护栏截断）"
@@ -960,6 +1024,23 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
             except Exception as e:
                 # 不静默：坏缓存悄悄退化成全量识别，会让人以为"缓存根本没生效"。
                 sys.stderr.write(f"[warn] 缓存读取失败，回退完整识别: {e}\n")
+
+    # ---- 先确认输入可解码，再决定要不要拉引擎 ----
+    # 位置在缓存分支**之后**（缓存命中要秒回，不该白做一次拆页），引擎拉起**之前**：
+    # 批量里有一个坏文件时，不该先等模型加载几十秒才看到一句 "cannot identify image file"。
+    work = tempfile.mkdtemp(prefix="pic2edit_")
+    try:
+        docs = prepare_input(effective_input, work)
+    except InputPrepError as e:
+        sys.stderr.write(f"[error] {e}\n")
+        raise SystemExit(3)
+    # prepare_input 返回 List[InputDocument]，流水线需要扁平的 InputItem 列表
+    items = []
+    for d in docs:
+        if hasattr(d, "pages"):
+            items.extend(d.pages)
+        else:
+            items.append(d)
 
     if skip_disc:
         sys.stderr.write("[info] 跳过判别式(RapidOCR)，仅用 VLM 兜底(需本机 :8080 的 llama-server)\n")
@@ -974,7 +1055,7 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
         except Exception:
             disc_ok = False
 
-    proc = None
+    handle = None
     vlm_probe = set()
 
     # 按本机显卡显存选模型档位：8GB 卡用 q8_0（精度优先），4GB 笔记本自动降到
@@ -994,30 +1075,25 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
     # A1 修复：凡 VLM 兜底可能被用到且（被跳过 或 判别式不可用）时，确保服务就绪。
     # 原逻辑在 skip_disc=True 时不拉服务，导致兜底调用失败。
     if skip_disc or not disc_ok:
-        _, proc = ensure_server(url, gpu_layers, _model_files)
+        _, handle = ensure_server(url, gpu_layers, _model_files, model_params)
     # 注：disc_ok 且未跳过时，不预拉服务（判别式通常已覆盖；真需兜底会因无服务而
     # 降级为空结果，与原行为一致，避免无谓占用显存）。
 
     table_avail = _table_available() if mode == "table" else False
 
-    work = tempfile.mkdtemp(prefix="pic2edit_")
     try:
-        docs = prepare_input(effective_input, work)
-        # prepare_input 返回 List[InputDocument]，流水线需要扁平的 InputItem 列表
-        items = []
-        for d in docs:
-            if hasattr(d, "pages"):
-                items.extend(d.pages)
-            else:
-                items.append(d)
         # 用探针包装 VLM 后端，记录哪些页走了 VLM，得到逐页溯源。
         # 注意：必须按 skip_disc 透传 policy（含 skip_discriminative），绝不能硬编码 False——
         # 否则即便用户用 PIC2EDIT_SKIP_DISCRIMINATIVE=1 强制跳过判别式，
         # 流水线仍会先跑 RapidOCR，而 RapidOCR 在复杂底纹发票上返回非空噪声，
         # 导致 _quality_ok 通过、VLM 兜底被门控掉、DeepSeek-OCR 根本没被调用。
-        probe = _VlmProbe(url, "deepseek-ocr")
+        probe = _VlmProbe(url, "deepseek-ocr", model_params)
+        # 提示词必须按 --mode 取：此前恒用 pipeline 的默认 ZH_PROMPT，
+        # 于是 --mode table / figure / html_table 只改了路由、没改提示词，
+        # 「让模型输出带 rowspan 的 HTML 表格」这类要求根本没传给模型。
         pipeline_run(items, vlm_backend=probe, server_url=url, model="deepseek-ocr",
-                     use_vlm_fallback=True, mode=mode, policy=_policy)
+                     use_vlm_fallback=True, mode=mode, policy=_policy,
+                     prompt=prompt_for_mode(mode), model_params=model_params)
         vlm_probe = probe.called
         # 先快照原始 OCR 文本：kv 后处理会改写 it.result，需在此之前保留“完整原文”
         # 全文重复护栏：VLM/判别式偶发「整段循环重复」（如重庆票样），截断后再入库，
@@ -1081,17 +1157,16 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
         #   其余 → 由注册表按 priority 逐个 detect/extract，前端不认识任何具体票种。
         schema_stats = _apply_schema_stats(pages)
     finally:
-        if proc is not None and stop_server:
+        if handle is not None and stop_server:
             # 经 EngineLauncher 整组回收（POSIX killpg / Windows CTRL_BREAK_EVENT），
-            # 避免只杀直接子进程而留下 llama-server worker 孤儿；等价原 terminate+wait+kill。
-            _el = EngineLauncher()
-            _el.stop(proc)
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                _el.kill(proc)
+            # 避免只杀直接子进程而留下 llama-server worker 孤儿。
+            # handle.stop() 对"沿用已在运行的服务"是 no-op，不会误关别人的进程。
+            handle.stop()
 
-    data = {"source": os.path.abspath(input_path),
+    # source 只写文件名：完整路径会把用户名、目录结构一起带进交付物（也会被
+    # RAG/资料库抓走）。与内核 export_json 保持同一条规矩，不再"一个入口写全路径、
+    # 另一个入口写文件名"。
+    data = {"source": os.path.basename(input_path),
             "vlm_fallback_invoked": bool(vlm_probe),
             "schema": schema_stats,          # 本次用了哪个 schema、命中几页（可溯源）
             "pages": pages}
@@ -1125,16 +1200,50 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
     print(_render(data, fmt, out_path, input_path, prov, mode))
 
 
-def main():
+def _expand_inputs(paths):
+    """把位置参数展开成待转换的文件列表（支持目录递归）。"""
+    exts = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".pdf")
+    out, missing = [], []
+    for raw in paths:
+        p = _safe_path(raw)
+        if os.path.isdir(p):
+            for root, dirs, files in os.walk(p):
+                dirs.sort()                     # 稳定顺序：同一目录两次跑输出一致
+                for fn in sorted(files):
+                    if fn.lower().endswith(exts):
+                        out.append(os.path.join(root, fn))
+        elif os.path.isfile(p):
+            out.append(p)
+        else:
+            missing.append(p)
+    return out, missing
+
+
+def _parse_model_params(args):
+    """从 4 个采样参数 flag 构造 ModelParams；没给的沿用已验证的不退化默认。"""
+    return make_model_params(
+        temperature=args.temperature,
+        repeat_penalty=args.repeat_penalty,
+        repeat_last_n=args.repeat_last_n,
+        max_tokens=args.max_tokens,
+    )
+
+
+def main(argv=None):
+    """命令行主流程；返回退出码（``cli()`` 负责把它交给 sys.exit）。"""
     ap = argparse.ArgumentParser(description="pic2edit: 图片/PDF -> 可编辑文件")
-    ap.add_argument("input", nargs="?", help="输入图片或 PDF 路径")
+    # 用 "*" 而不是 "+"：--list-schemas 是纯查询，不该被强制要求给输入路径。
+    ap.add_argument("input", nargs="*",
+                    help="输入图片 / PDF / 多页 TIF，可给多个；给目录则递归处理其中的受支持文件")
     ap.add_argument("--format", choices=["md", "txt", "docx", "json", "html"], default="md")
-    ap.add_argument("--mode",
-                    choices=["markdown", "ocr", "figure", "table"], default="markdown")
+    ap.add_argument("--mode", choices=list_modes(), default="markdown",
+                    help="识别策略（与 GUI 的「输出格式」同义）："
+                         + "/".join(list_modes()))
     ap.add_argument("--url", default=f"http://localhost:{PORT}")
     ap.add_argument("--gpu-layers", type=int, default=None,
                     help="显存层数；容器无 GPU 时传 0 走 CPU。默认不传（自动用 GPU）")
-    ap.add_argument("--out", default="", help="输出文件路径（默认与输入同名替换扩展名）")
+    ap.add_argument("--out", default="",
+                    help="输出路径：单输入时为文件路径；多输入（含目录）时为目录")
     ap.add_argument("--stop-server", action="store_true",
                     help="若本次拉起了引擎，转换完成后退出引擎进程")
     ap.add_argument("--cache", action="store_true",
@@ -1151,22 +1260,86 @@ def main():
                          "用 --list-schemas 查看本机可用的 id")
     ap.add_argument("--list-schemas", action="store_true",
                     help="列出本机可用的凭证 schema 后退出")
-    args = ap.parse_args()
+    # 采样参数：与 GUI 的设置面板同一组（GUI 能调的，命令行也要能调）
+    ap.add_argument("--temperature", type=float, default=None,
+                    help="采样温度；默认 0（贪心）。>0 会让 DeepSeek-OCR 随机退化、整篇重列")
+    ap.add_argument("--repeat-penalty", type=float, default=None,
+                    help="重复惩罚；默认 1.10（1.15+ 会提前吐 EOS / 英文乱入）")
+    ap.add_argument("--repeat-last-n", type=int, default=None,
+                    help="重复检测窗口；默认 4096（引擎默认 64 对长程退化无效）")
+    ap.add_argument("--max-tokens", type=int, default=None,
+                    help="单页最大生成 token；默认 16384")
+    args = ap.parse_args(argv)
 
     if args.list_schemas:
         items = list_schemas()
         if not items:
             print("（未发现任何凭证 schema）")
         for it in items:
-            print(f"{it['id']:<16} v{it['version']:<8} {it['kind']:<10} {it['title']}")
-        return
+            # 打印 origin（实际加载根目录）而非 kind（包自报的类型）：
+            # 用户改过用户目录里的同名包后，只有 origin 能说明生效的是哪一份。
+            origin = it.get("origin") or it.get("kind") or "?"
+            print(f"{it['id']:<16} v{it['version']:<8} {origin:<10} {it['title']}")
+        return 0
+
     if not args.input:
         ap.error("需要输入路径（或使用 --list-schemas 查看可用 schema）")
 
-    convert(args.input, args.format, args.mode, args.url,
-            args.gpu_layers, args.out, args.stop_server, args.cache, args.prov,
-            args.vlm_model, args.schema)
+    targets, missing = _expand_inputs(args.input)
+    for m in missing:
+        sys.stderr.write(f"[error] 输入不存在: {m}\n")
+    if not targets:
+        sys.stderr.write("[error] 没有可转换的文件\n")
+        return 2
+
+    multi = len(targets) > 1
+    out_dir = ""
+    if multi:
+        # 多输入时 --out 只能是目录：否则 N 个文件会争抢同一个输出名，
+        # 结果只剩最后一个（静默丢失，比报错难查得多）。
+        if args.out and not os.path.isdir(args.out):
+            sys.stderr.write("[error] 多个输入时 --out 必须是已存在的目录\n")
+            return 2
+        out_dir = args.out
+        if not out_dir:
+            # 省略 --out 时输出落到各输入所在目录（含递归进来的子目录）。
+            # 行为保留，但必须说出来：批量处理一个目录树会就地长出 N 个产物，
+            # 不说清楚就是"悄悄往用户源目录里写东西"。
+            sys.stderr.write(
+                f"[info] 未指定 --out，{len(targets)} 个产物写到各自输入所在目录\n")
+
+    # schema 只在这里校验一次：批量时写错 id 不该等到第一个文件 OCR 完才报错，
+    # 也不该"第一个文件报错、其余静默跳过"。
+    try:
+        resolve_schema(args.schema)
+    except KeyError as e:
+        sys.stderr.write(f"[error] {e.args[0]}\n")
+        return 2
+
+    mp = _parse_model_params(args)
+    failed = 0
+    for t in targets:
+        if multi:
+            stem = os.path.splitext(os.path.basename(t))[0]
+            out = os.path.join(out_dir or os.path.dirname(t), f"{stem}.{args.format}")
+        else:
+            out = args.out
+        try:
+            convert(t, args.format, args.mode, args.url, args.gpu_layers, out,
+                    args.stop_server, args.cache, args.prov, args.vlm_model,
+                    args.schema, mp)
+        except SystemExit as e:
+            if not multi:
+                raise
+            failed += 1
+            sys.stderr.write(f"[warn] {os.path.basename(t)} 跳过（exit {e.code}）\n")
+    return 1 if failed else 0
+
+
+def cli():
+    """``python pic2edit_convert.py`` 的真正的入口：把返回值变成退出码。"""
+    sys.exit(main())
 
 
 if __name__ == "__main__":
-    main()
+    cli()

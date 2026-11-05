@@ -90,7 +90,11 @@ def discover():
     return exe, model, mmproj
 
 
-def build_command(exe, model, mmproj, model_params=None):
+def build_command(exe, model, mmproj, model_params=None, port=None):
+    # port 可覆盖：调用方若指定了 --url（如已被别的实例占用 8080，改用 8081），
+    # 拉起的服务必须听在那个端口上。此前这里恒用模块常量 PORT，于是
+    # ensure_engine("http://127.0.0.1:8081") 会在 8080 起服务、再去 8081 等就绪，
+    # 必然超时，还留下一个没人管的 8080 进程。
     # NOTE: intentionally NOT passing --chat-template. The bare "deepseek-ocr"
     # template breaks multimodal (no auto marker / no vision binding). Let
     # llama.cpp pick the model's native template, which works correctly.
@@ -108,7 +112,7 @@ def build_command(exe, model, mmproj, model_params=None):
             # 关闭 KV 状态缓存复用：连发多页时缓存区易被大块多模态状态占满，
             # 触发 "failed to restore kv cache"；请求会回退重算但日志报错且拖慢。
             "--cache-reuse", "0",
-            "--host", "127.0.0.1", "--port", PORT]
+            "--host", "127.0.0.1", "--port", str(port or PORT)]
     return cmd
 
 

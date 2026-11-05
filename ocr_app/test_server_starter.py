@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""ServerStarter 修复单测（headless / offscreen）：
+"""引擎拉起的诊断单测（headless / offscreen）：
 
 覆盖三类修复：
 1. 平台化失败文案 —— Linux/macOS 不再出现 Windows 专属的 .exe / Smart App Control 措辞；
 2. 子进程输出落盘 —— _stream 的每行引擎日志同时写进 pic2edit.log（经 _logger）；
 3. 拉起前显存预检 —— free_vram_mib / estimate_vram_mib 估算，显存不足时直接给出友好提示，
    不再让 ggml 直接 SIGABRT（-6）崩溃。
+
+注意：1 与 3 的实现已下沉到 ``backends/engine_boot.py``（非 Qt），由 GUI 的
+``ServerStarter`` 与 skill 的 ``ensure_server`` **共用**；测试因此指向 engine_boot，
+只对 GUI 自己的线程行为（_stream / _fail / _start_llamacpp）用 ServerStarter。
 """
 import os
 import sys
@@ -20,6 +24,7 @@ from PySide6.QtTest import QSignalSpy
 from unittest import mock
 
 from backends import server_launcher as S
+from backends import engine_boot as B
 import run_llamacpp_server  # 确保 discover / build_command 可用
 
 
@@ -29,38 +34,45 @@ def _app():
 
 # ---------------- 1. 平台化失败文案 ----------------
 def test_platform_msgs_linux():
-    with mock.patch.object(S, "_IS_WINDOWS", False):
-        msg = S._server_not_found_msg()
+    with mock.patch.object(B, "_IS_WINDOWS", False):
+        msg = B.server_not_found_msg()
         assert "download_models.sh" in msg
         assert ".exe" not in msg
-        assert "Smart App Control" not in S._launch_fail_hint()
-        assert "Smart App Control" not in S._probe_exit_hint()
-        assert "nvidia-smi" in S._probe_exit_hint()
+        assert "Smart App Control" not in B.launch_fail_hint()
+        assert "Smart App Control" not in B.probe_exit_hint()
+        assert "nvidia-smi" in B.probe_exit_hint()
 
 
 def test_platform_msgs_windows():
-    with mock.patch.object(S, "_IS_WINDOWS", True):
-        msg = S._server_not_found_msg()
+    with mock.patch.object(B, "_IS_WINDOWS", True):
+        msg = B.server_not_found_msg()
         assert "llama-server.exe" in msg and "download_models.bat" in msg
-        assert "Smart App Control" in S._launch_fail_hint()
-        assert "Smart App Control" in S._probe_exit_hint()
+        assert "Smart App Control" in B.launch_fail_hint()
+        assert "Smart App Control" in B.probe_exit_hint()
+
+
+def test_server_starter_uses_shared_diagnostics():
+    """GUI 的文案必须就是 engine_boot 的那一份，不能各写一套（否则又会漂移）。"""
+    assert S.server_not_found_msg is B.server_not_found_msg
+    assert S.probe_exit_hint is B.probe_exit_hint
+    assert S.free_vram_mib is B.free_vram_mib
 
 
 # ---------------- 3. 显存预检 helpers ----------------
 def test_free_vram_mib_no_smi():
-    with mock.patch.object(S.shutil, "which", return_value=None), \
-         mock.patch.object(S.os.path, "exists", return_value=False):
-        assert S.free_vram_mib() is None
+    with mock.patch.object(B.shutil, "which", return_value=None), \
+         mock.patch.object(B.os.path, "exists", return_value=False):
+        assert B.free_vram_mib() is None
 
 
 def test_free_vram_mib_parses():
     fake = mock.Mock()
     fake.returncode = 0
     fake.stdout = "5037\n"  # 多 GPU 时取最大空闲
-    with mock.patch.object(S.shutil, "which", return_value="/usr/bin/nvidia-smi"), \
-         mock.patch.object(S.os.path, "exists", return_value=True), \
-         mock.patch.object(S.subprocess, "run", return_value=fake):
-        assert S.free_vram_mib() == 5037
+    with mock.patch.object(B.shutil, "which", return_value="/usr/bin/nvidia-smi"), \
+         mock.patch.object(B.os.path, "exists", return_value=True), \
+         mock.patch.object(B.subprocess, "run", return_value=fake):
+        assert B.free_vram_mib() == 5037
 
 
 def test_estimate_vram_mib():
@@ -71,9 +83,9 @@ def test_estimate_vram_mib():
             f.write(b"0" * (1024 * 1024 * 1024))        # 1 GiB
         with open(mm, "wb") as f:
             f.write(b"0" * (512 * 1024 * 1024))        # 0.5 GiB
-        est = S.estimate_vram_mib(m, mm)
+        est = B.estimate_vram_mib(m, mm)
         assert 1400 < est < 1800                        # ~1.725 GiB（含 15% 余量）
-    assert S.estimate_vram_mib(None, None) == 0
+    assert B.estimate_vram_mib(None, None) == 0
 
 
 def test_vram_precheck_fails_before_launch():
@@ -118,6 +130,84 @@ def test_fail_sets_done_and_emits_once():
     assert spy.at(0)[0] == "boom"
     st._fail("again")  # 已 done，应被忽略
     assert spy.count() == 1
+
+
+def test_gui_starter_passes_url_port_to_engine(monkeypatch):
+    """GUI 侧同样要把 url 的端口传给拉起命令（与 skill 共用同一份诊断逻辑）。"""
+    _app()
+    seen = {}
+
+    monkeypatch.setattr(run_llamacpp_server, "discover",
+                        lambda: ("/bin/true", "/x/m.gguf", "/x/mm.gguf"))
+    monkeypatch.setattr(S, "free_vram_mib", lambda: None)
+    monkeypatch.setattr(S, "estimate_vram_mib", lambda *a, **k: 0)
+    real_build = run_llamacpp_server.build_command
+
+    def _spy(*a, **kw):
+        seen.update(kw)
+        return real_build(*a, **kw)
+
+    monkeypatch.setattr(run_llamacpp_server, "build_command", _spy)
+
+    def _boom(*a, **kw):
+        raise RuntimeError("到此为止")
+
+    monkeypatch.setattr(S.EngineLauncher, "start", _boom)
+
+    st = S.ServerStarter("llama_cpp", "http://127.0.0.1:8282", cfg=type("C", (), {})())
+    st._start_llamacpp()
+
+    assert seen.get("port") == "8282", f"GUI 拉起端口必须来自 url，实得 {seen.get('port')}"
+
+
+# ---------------- 4. 引擎必须听在调用方指定的端口 ----------------
+def test_port_of_reads_url():
+    assert B.port_of("http://127.0.0.1:8081") == "8081"
+    assert B.port_of("http://localhost:9999/") == "9999"
+    # 没写端口时退回默认，不能抛
+    assert B.port_of("http://127.0.0.1") == B._engine_cli.PORT
+    assert B.port_of("http://127.0.0.1:notaport") == B._engine_cli.PORT
+
+
+def test_build_command_honours_port():
+    cmd = run_llamacpp_server.build_command("exe", "m.gguf", "mp.gguf", port="8181")
+    assert cmd[cmd.index("--port") + 1] == "8181"
+    cmd2 = run_llamacpp_server.build_command("exe", "m.gguf", "mp.gguf")
+    assert cmd2[cmd2.index("--port") + 1] == run_llamacpp_server.PORT
+
+
+def test_ensure_engine_launches_on_requested_port(monkeypatch):
+    """``ensure_engine`` 必须把 url 里的端口传给拉起命令。
+
+    实测踩到过：指定 8081 时服务仍起在默认 8080，然后去 8081 等就绪 → 必然超时，
+    同时留下一个没人回收的 8080 进程。
+    """
+    seen = {}
+    monkeypatch.setattr(B, "probe", lambda base: False)
+    monkeypatch.setattr(B._engine_cli, "discover", lambda: ("exe", "m.gguf", "mp.gguf"))
+    monkeypatch.setattr(B, "estimate_vram_mib", lambda *a, **k: 0)
+    monkeypatch.setattr(B, "free_vram_mib", lambda: None)
+
+    real_build = B._engine_cli.build_command
+
+    def _spy(*a, **kw):
+        seen.update(kw)
+        return real_build(*a, **kw)
+
+    monkeypatch.setattr(B._engine_cli, "build_command", _spy)
+
+    def _boom(*a, **kw):
+        raise RuntimeError("到此为止，不真的拉起进程")
+
+    monkeypatch.setattr(B.EngineLauncher, "start", _boom)
+
+    try:
+        B.ensure_engine("http://127.0.0.1:8181", gpu_layers=0, timeout=1)
+    except B.EngineBootError:
+        pass
+    else:
+        raise AssertionError("启动失败必须抛 EngineBootError")
+    assert seen.get("port") == "8181", f"拉起端口必须是 url 里的端口，实得 {seen.get('port')}"
 
 
 if __name__ == "__main__":

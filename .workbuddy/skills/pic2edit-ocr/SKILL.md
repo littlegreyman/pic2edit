@@ -21,16 +21,26 @@ agent_created: true
      - `html`：命中凭证 schema 时**严格按 schema 版式**还原（红框/省名/蓝字/合并单元格），不含坐标表、不含原始全文；未命中 schema 时按 OCR 坐标**尽量还原原图版面**。
      - `json`：原样输出 `pages[]`，每页含 `raw_text` / `text` / `engine` / `lines`（坐标）/ **`schema`（结构化字段）**，供入库与二次加工。
      - `txt` / `docx`：同 `md` 的分派逻辑（txt 用 `标签：值` + TAB，docx 走 md→docx）。
-   - 识别模式 `--mode`：**这是 pic2edit 的识别流水线参数，只影响"怎么识别"，不影响"渲染成什么"**。表格 / 键值表 → `table`；图表 / 公式 → `figure`；纯文本 OCR → `ocr`；默认 → `markdown`。
+   - 识别模式 `--mode`：**这是 pic2edit 的识别流水线参数，只影响"怎么识别"，不影响"渲染成什么"**。
+     `markdown`（默认）/ `ocr` / `figure`（图表公式）/ `table`（键值→表，确定性后处理）/ `html_table`（**合并单元格表格**：让模型输出带 rowspan/colspan 的 HTML，docx 里还原真实合并单元格，适合发票明细、复杂报表）。
+     `mode` 会同时决定**提示词**与**路由**（table/figure/html_table 跳过 RapidOCR 直走 VLM）。
    - 模型档位 `--vlm-model`：`auto`（默认，按显存自动选）/ `q8` / `q4` / `bf16` / `cpu`。
+   - 采样参数（与 GUI 设置面板同一组，默认值即已验证的"不退化"组合）：
+     `--temperature`（默认 0，**>0 会让 DeepSeek-OCR 随机退化整篇重列**）、`--repeat-penalty`（默认 1.10）、`--repeat-last-n`（默认 4096）、`--max-tokens`（默认 16384）。
+     只有明确要复现某个实验时才调；调完记得 `--cache` 的键已自动带上模型档位与跳过标志，但**不**带采样参数，需要重跑时用 `--schema`/换目录或删掉缓存目录。
    - 凭证 schema `--schema`：**三态，默认 `auto`**。
      - `auto`：按优先级逐页判定，命中哪种凭证就用哪套字段与版式（发票、固定资产卡片…）；
      - `none`：完全不启用 schema，一律按通用文本 / 原图版面输出（"没有 schema 的世界"）；
      - `<id>`：只按指定 schema 抽取（如 `invoice`），未命中时告警但不中断。
-     不确定有哪些可用时先跑 `--list-schemas` 列出（含 id / 版本 / 来源 / 标题）。
+     不确定有哪些可用时先跑 `--list-schemas` 列出（含 id / 版本 / **实际加载来源** / 标题）。
+     「来源」是 `builtin`（随包分发）或 `user`（`~/.pic2edit/schemas`、`PIC2EDIT_SCHEMA_DIR`）——
+     拷内置包出来改过之后，`manifest.json` 里的 kind 仍是 `builtin`，**只有这一列能证明生效的是你改的那份**。
      用户明确说"这不是发票 / 不要按票面格式"时用 `--schema none`；
      用户明确指定票种时用具体 id，避免 auto 误判。
    - 可选开关：`--cache`（按内容哈希缓存，重复预处理秒回）；`--prov`（每页加 `<!-- engine:xxx -->` 溯源注释）。
+   - **输入形态**：位置参数可以是**多个文件**，也可以是一个**目录**（递归收集 png/jpg/webp/bmp/tif/tiff/pdf，按文件名稳定排序）。
+    多输入时 `--out` **必须是已存在的目录**（否则报错退出 2——N 个文件争抢同一个输出名会静默只剩最后一个）；
+    不给 `--out` 时各文件输出到其所在目录、同名替换扩展名（stderr 会明说 `[info] 未指定 --out，N 个产物写到各自输入所在目录`，避免往源目录里悄悄铺文件）。批处理里单个文件失败只跳过该文件，最后退出码为 1。
 3. 用项目虚拟环境运行 helper（`<skill>/scripts/pic2edit_convert.py` 相对本技能目录）：
    - 依赖 venv 在 **`ocr_app/.venv`**（主环境，含 requests / Pillow / pypdfium2 / python-docx / PySide6 / rapidocr>=3.10）。判别式 RapidOCR 由 helper 经**子进程**调用 `ocr_app/.venv`（rapidocr 已支持 Python 3.14，无需独立 `.venv_ocr`），无需手动切 venv。
    - 选取 venv 里的 python（**跨平台**）：
@@ -49,11 +59,18 @@ agent_created: true
      ocr_app/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py <附件路径> --schema none
      # 看看本机有哪些 schema
      ocr_app/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py --list-schemas
+     # 整个目录批量转换（一个月的票据一个目录，不必逐个调用）
+     ocr_app/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py <目录> --out <输出目录> --format md --cache
+     # 合并单元格表格
+     ocr_app/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py <附件路径> --mode html_table --format docx
      ```
    - helper 会自动定位 `ocr_app`：**优先读环境变量 `PIC2EDIT_OCR_APP` / `PIC2EDIT_ROOT`**；未设置时按常见用户目录（`~/Documents/pic2edit`、`~/文档/pic2edit`、`~/projects/pic2edit` 等）兜底，无需手动 `cd`。若你的项目不在这些位置，设置上述环境变量最稳妥。
    - 容器内无 GPU 自测时追加 `--gpu-layers 0`（CPU 模式）；用户原生桌面**不加**（自动用 GPU）。
    - 引擎未启动会被 helper 自动拉起（首次约 1–3 分钟加载进显存）；已启动则复用，不重复拉起。
-4. helper 把最终文件的**绝对路径**打印到 stdout（唯一 stdout 输出）。用 `present_files` 把该文件推给用户预览 / 下载。
+4. helper 把最终文件的**绝对路径**打印到 stdout（单输入一行；批量时为每行一个）。用 `present_files` 把文件推给用户预览 / 下载。
+   诊断信息一律走 stderr（`[cache]` / `[schema]` / `[engine]` / `[warn]` 前缀），stdout 只有路径，便于脚本消费。
+   退出码：`0` 成功；`1` 批量里有文件失败（其余仍已产出）；`2` 参数/输入整体不可用（未知 schema、没有可转换文件、多输入却给了文件型的 `--out`）；`3` 输入文件无法解码（损坏、为空、扩展名与实际格式不符）。
+   无法解码时 stderr 是 `[error] 无法解码图片：<文件名>（…）` 这样一句人话，**不是** Pillow 的异常栈——不必去解析 traceback。
 
 ## 输出分派（schema 驱动，不看 --mode）
 交付形态由「**这一页有没有命中凭证 schema**」决定，而不是由 `--mode` 决定。这是刻意为之：
@@ -192,7 +209,12 @@ agent_created: true
 ### 缓存与 schema 的关系（重要）
 - 缓存**只存识别结果**（`raw_text` / `lines` / 页面尺寸），`schema` 是派生数据，写入缓存前被剔除、每次读取时现算。
 - 好处：改进抽取逻辑后**不需要 bump `CACHE_VERSION` 重跑昂贵的 OCR**，缓存命中的页面立刻按新逻辑重新抽取。
-- 反过来也意味着：想验证「识别层」的改动（换模型、改预处理）必须换缓存键，否则看到的是旧 OCR 结果。
+- 缓存键 = `sha256(输入文件) | mode | CACHE_VERSION | 模型档位 | 是否跳过判别式 | 掩膜矩形`。
+  识别层参数**已在键里**：换 `--vlm-model`、改 `PIC2EDIT_SKIP_DISCRIMINATIVE`、改掩膜矩形都会自然落到不同缓存，不会读到旧 OCR 结果。
+  注意：`--temperature` 等采样参数**不在**键里（同一次识别结果按不同采样重跑没有意义）；改了采样参数想重跑，删掉缓存目录即可。
+- 缓存目录是**按用户隔离**的（`<tmp>/pic2edit_cache_<uid>/`，权限 0700）：共享的 `/tmp/pic2edit_cache` 在多用户机器上可被其他本地用户预置伪造的识别结果。
+- 缓存**不存** `source`（输入路径）与页里的 `image`（临时底图路径）：前者是本次运行的东西，后者下次启动即失效。
+- 坐标（`lines`）只在需要版面的请求（`html` / `json` / `table`）里才算。所以「先 `--format md` 建缓存、再 `--format html`」时，命中分支会**补算坐标并回写缓存**（stderr 会写 `[cache] 补算 N 页坐标`），产物与不走缓存时一致——不会静默退化成纯文本。
 
 ## 原始 OCR 日志（可追溯，不污染交付物）
 - 每次识别的原始全文写入 `<skill>/logs/<YYYY-MM-DD>/<文件名>.<sha256前8位>.ocr.json`，含：截断前原文、截断后原文、engine、模型文件名、`trimmed_reps`、页面尺寸。
@@ -230,7 +252,7 @@ agent_created: true
     （4 GB 机器本来也只能 Q4），真正的护栏应加在**输出后置校验**上（长度异常、
     英文占比、退化文章、复读），命中即降级到另一档并标记人工复核。
 
-- 实现方式：**只把权重文件名传给 pic2edit 的 `build_command()`**，不修改 pic2edit 任何代码。运行日志 `[model] 档位=… 模型=… 显卡=… 显存=…` 可核对。
+- 实现方式：**只把权重文件名传给 pic2edit 的 `build_command()`**，不动 pic2edit 的识别逻辑。运行日志 `[model] 档位=… 模型=… 显卡=… 显存=…` 可核对。
 - `ocr.mask_password`（默认 `auto`，即不掩膜）控制密码区掩膜；`ocr.handwriting_screen`（**默认 false**）控制手写预筛。
 
 ## 关键约束（已用真实服务端验证，切勿违背）
@@ -238,6 +260,7 @@ agent_created: true
 - 引擎启动**不能**加 `--chat-template deepseek-ocr`（会让多模态失效）。
 - 支持输入：jpg / jpeg / png / bmp / webp / tif / tiff 图片、整页 PDF、多页 TIF（多页逐页识别并拼接为一份输出）。
 - 输出落点默认与输入同目录、同名替换扩展名（与 GUI 行为一致）；可用 `--out` 覆盖。
+- `--url` 不只是"去哪连"：helper 需要自己拉起引擎时，**监听端口取自 `--url`**（`http://127.0.0.1:8181` 就起在 8181）。8080 已被别的实例占用时，直接换端口即可，不必停别人的服务。
 
 ## 重要提示（质量与无幻觉）
 - **表格 / 图表 / 公式模式（`--mode table|figure`）会跳过 RapidOCR 判别式、直接走 DeepSeek VLM 兜底**，幻觉风险高于普通文档。对法规 / 处罚通告等带表格件，建议人工复核输出，或用 `--prov` / `--format json` 标出来源后重点核对。
@@ -252,7 +275,7 @@ agent_created: true
   2. 取其右侧的褐色密码框（宽约为竖排标签高的 3~4 倍，且不越过下方「税率/金额」表头，避免误伤货物明细表）；
   3. 用该区域内文字是否「均为数字/特殊符号乱码」（无汉字）校验；校验通过即采用，否则回退增值税通用预设。
 - 通用预设矩形为 `0.50,0.20,0.95,0.44`（覆盖上中右带，避开左侧购货方文字与下方表格/销货方）；可用 `PIC2EDIT_MASK_RECT="x0,y0,x1,y1"`（比例）**手动覆盖**智能定位结果。
-- 该特性**默认关闭**（opt-in），不影响既有行为；属 skill 层预处理，不修改 pic2edit 项目。非标准版式建议先用 `PIC2EDIT_MASK_RECT` 微调或关闭，避免误伤真实文本。
+- 该特性**默认关闭**（opt-in），不影响既有行为。掩膜实现已于 Phase 3.3 **下沉到内核** `ocr_app/backends/mask.py`（GUI 与 skill 共用同一套定位与涂白），不再只存在于 skill 私有脚本里。非标准版式建议先用 `PIC2EDIT_MASK_RECT` 微调或关闭，避免误伤真实文本。
 
 ## 手写/印刷预筛（P0 路由，**默认关闭** — 未达路由门槛）
 

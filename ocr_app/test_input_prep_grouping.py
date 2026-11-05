@@ -11,7 +11,7 @@ import tempfile
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from utils.input_prep import prepare_image, prepare_tif, InputDocument
+from utils.input_prep import prepare_image, prepare_tif, InputDocument, InputPrepError
 
 
 def _work():
@@ -57,3 +57,39 @@ if __name__ == "__main__":
     test_tif_three_frames()
     print("\nRESULT: ALL PASS (test_input_prep_grouping)")
     sys.exit(0)
+
+
+# ---------------------------------------------------------------------------
+# 不可解码的输入：必须抛 InputPrepError（人话提示），而不是 Pillow 的原始异常
+# ---------------------------------------------------------------------------
+def test_corrupt_image_raises_inputprep_error():
+    """下载中断的残缺 .png / 改了扩展名的文本：两个前端都要能说清是哪个文件坏了。
+
+    此前 ``prepare_image`` 直接让 ``UnidentifiedImageError`` 冒出去，CLI 侧变成
+    一整屏 PIL 栈 + 非零退出，用户看不到文件名与原因。
+    """
+    work = _work()
+    bad = os.path.join(work, "truncated.png")
+    with open(bad, "wb") as f:
+        f.write(b"this is definitely not a png")
+
+    try:
+        prepare_image(bad, work)
+    except InputPrepError as e:
+        assert "truncated.png" in str(e), "报错必须点名是哪个文件"
+    else:
+        raise AssertionError("坏图片必须抛 InputPrepError")
+
+
+def test_corrupt_tif_raises_inputprep_error():
+    work = _work()
+    bad = os.path.join(work, "broken.tif")
+    with open(bad, "wb") as f:
+        f.write(b"II*\x00garbage")
+
+    try:
+        prepare_tif(bad, work)
+    except InputPrepError as e:
+        assert "broken.tif" in str(e)
+    else:
+        raise AssertionError("坏 TIFF 必须抛 InputPrepError")
