@@ -41,7 +41,7 @@ def test_parse_mask_rect_validation():
 
 
 def test_mask_whitens_requested_region(tmp_path):
-    pil = pytest.importorskip("PIL.Image")
+    pytest.importorskip("PIL.Image")
     from PIL import Image
 
     src = tmp_path / "in.png"

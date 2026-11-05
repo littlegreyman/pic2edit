@@ -6,8 +6,6 @@
 """
 import os
 import sys
-import json
-import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # ocr_app
@@ -15,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # ocr_app
 from PySide6.QtWidgets import QApplication
 
 import utils.usage_log as UL
-from config import Config, ModelParams, MODEL_PARAM_PRESETS
+from config import Config
 from gui import SettingsDialog
 
 

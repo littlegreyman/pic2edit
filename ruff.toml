@@ -1,0 +1,28 @@
+# ruff 配置：只开"确定是错误"的规则，不做风格强制。
+#
+# 取舍理由：这套代码的注释密度和长行都是刻意的（例如日志行的对齐、表格常量），
+# 用 E501 去卡行长只会逼出一堆无意义的折行。同理不启 isort——backend_api 的导入
+# 顺序是按"能力分层"排的（内核 → 表格 → schema → 预处理），不是按字母。
+line-length = 120
+target-version = "py310"
+
+[lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # 行长：刻意保留长行（日志/常量表）
+]
+
+[lint.per-file-ignores]
+# 门面与包的 __init__ 是**故意的** re-export：导入即对外承诺，不在本文件内使用。
+"ocr_app/backend_api.py" = ["F401"]
+"ocr_app/schemas/__init__.py" = ["F401"]
+"ocr_app/backends/__init__.py" = ["F401"]
+"ocr_app/utils/**/__init__.py" = ["F401"]
+# 需要先 sys.path.insert 再 import 的入口/脚本/测试
+"ocr_app/_smoke_test.py" = ["E402"]
+"ocr_app/verify_backend.py" = ["E402"]
+"ocr_app/test_*.py" = ["E402"]
+"ocr_app/backends/ocr_pipeline.py" = ["E402"]
+"ocr_app/backends/transformers_server.py" = ["E402"]
+"ocr_app/backends/transformers_backend.py" = ["E402"]
+"ocr_app/backends/discriminative_backend.py" = ["E402"]

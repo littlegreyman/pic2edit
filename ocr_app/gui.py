@@ -23,7 +23,7 @@ from backend_api import MODE_AUTO, MODE_NONE, list_schemas
 from worker import OcrWorker
 from document_controller import DocumentController, Selection
 from utils.input_prep import prepare_input, InputItem, InputDocument
-from utils.export_docx import md_to_docx, save_text, md_pages_to_docx
+from utils.export_docx import save_text, md_pages_to_docx
 from utils.assemble import assemble_document
 from utils.export_formats import export_html, export_json
 from utils import usage_log
@@ -1045,7 +1045,7 @@ class MainWindow(QMainWindow):
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("后端不可用")
         box.setText(msg)
-        btn_ok = box.addButton(QMessageBox.StandardButton.Ok)
+        box.addButton(QMessageBox.StandardButton.Ok)
         btn_dl = None
         if self.backend.name == "llama_cpp" and not ready:
             btn_dl = QPushButton("下载模型/引擎")

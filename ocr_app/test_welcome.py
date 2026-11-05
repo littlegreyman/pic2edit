@@ -28,7 +28,7 @@ def test_constants():
 
 
 def test_welcome_dialog():
-    app = QApplication.instance() or QApplication([])
+    _app = QApplication.instance() or QApplication([])  # noqa: F841  必须持有引用，否则窗口构造即崩
     dlg = WelcomeDialog()
     assert hasattr(dlg, "btn_ok")
     assert dlg.btn_ok.text() == "确认开始"

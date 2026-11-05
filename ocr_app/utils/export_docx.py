@@ -7,12 +7,10 @@ Markdown -> docx 转换器覆盖常见元素：
 - | a | b | 表格
 - **加粗** 行内格式
 """
-import os
 import re
 from typing import List
 
 from docx import Document
-from docx.shared import Pt
 
 from .table_html import parse_html_tables, layout_table
 

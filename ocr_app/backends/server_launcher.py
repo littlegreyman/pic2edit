@@ -11,7 +11,6 @@ import time
 import threading
 import subprocess
 import shutil
-import logging
 
 import urllib.request
 

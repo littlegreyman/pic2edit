@@ -4,9 +4,9 @@
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDialogButtonBox,
+    QDialog, QVBoxLayout, QLabel, QPushButton, QDialogButtonBox,
 )
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont
 
 APP_NAME = "pic2edit"
 APP_VERSION = "alpha 0.19"

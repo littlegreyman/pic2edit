@@ -28,6 +28,8 @@ GUI 与 Skill 两个前端都**只应通过本模块**访问 OCR 后端能力，
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from backends.ocr_pipeline import run
 from backends import (
     OCRBackend,
@@ -59,6 +61,9 @@ from backends.mask import (
 from utils.handwriting_screen import detect_handwriting
 from utils.model_select import choose_vlm, describe_vlm_choice
 
+if TYPE_CHECKING:  # 仅用于标注，运行期不导入（避免引入 config 依赖到门面顶层）
+    from config import ModelParams
+
 # 凭证 schema（消费侧门面：发现 / 三态选择 / 抽取 / 渲染）
 from schemas import (
     MODE_AUTO,
@@ -76,7 +81,7 @@ from schemas import (
 import run_llamacpp_server as _engine_cli
 
 
-def discover_engine():
+def discover_engine() -> tuple["str | None", "str | None", "str | None"]:
     """定位本机 llama-server 可执行文件与默认模型/投影文件。
 
     Returns:
@@ -86,7 +91,8 @@ def discover_engine():
     return _engine_cli.discover()
 
 
-def build_engine_command(exe, model, mmproj, model_params=None):
+def build_engine_command(exe: str, model: str, mmproj: "str | None",
+                         model_params: "ModelParams | None" = None) -> list[str]:
     """按 llama-server 的既有约定构造启动命令行（不含额外覆盖参数）。
 
     Args:
@@ -104,7 +110,8 @@ def build_engine_command(exe, model, mmproj, model_params=None):
 pipeline_run = run
 
 
-def create_backend(name: str, *, url: str, model: "str | None" = None, model_params=None):
+def create_backend(name: str, *, url: str, model: "str | None" = None,
+                   model_params: "ModelParams | None" = None) -> OCRBackend:
     """按名称构造一个兜底 VLM 后端实例。
 
     name ∈ {ollama, llama_cpp, transformers}；discriminative（RapidOCR）是流水线

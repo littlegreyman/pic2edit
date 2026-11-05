@@ -86,14 +86,14 @@ def _group_rows(lines):
     """
     if not lines:
         return []
-    hs = [max(l["y1"] - l["y0"], 1) for l in lines]
+    hs = [max(ln["y1"] - ln["y0"], 1) for ln in lines]
     band = max(6.0, 0.6 * sorted(hs)[len(hs) // 2])  # 行高约 60% 作为同行判定带宽
     rows = {}
-    for l in lines:
-        rows.setdefault(round(l["y0"] / band), []).append(l)
+    for ln in lines:
+        rows.setdefault(round(ln["y0"] / band), []).append(ln)
     ordered = []
     for key in sorted(rows):
-        grp = sorted(rows[key], key=lambda l: l["x0"])
+        grp = sorted(rows[key], key=lambda ln: ln["x0"])
         if _HEADING_RE.match(grp[0]["text"].strip()):
             txt = "  ".join(g["text"].strip() for g in grp)
         else:
@@ -153,7 +153,7 @@ def _pick_python():
     否则回退到独立的 .venv_ocr（若仍保留）。都不可用则返回 None。
     """
     try:
-        import rapidocr  # 新 rapidocr 支持 3.14，随主 venv 安装
+        import rapidocr  # noqa: F401  仅探测可导入性，新 rapidocr 支持 3.14
         return sys.executable
     except Exception:
         pass

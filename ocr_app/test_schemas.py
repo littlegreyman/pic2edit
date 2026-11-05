@@ -24,7 +24,6 @@ from schemas import (
     MODE_AUTO,
     MODE_NONE,
     apply_schemas,
-    get_registry,
     list_schemas,
     render_schema,
     reset_registry,

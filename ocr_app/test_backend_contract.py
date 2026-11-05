@@ -7,7 +7,6 @@
 3. GUI / Skill 路由一致性——相同运行环境下两侧 RoutingPolicy 必须完全一致。
 """
 import os
-import signal
 import subprocess
 import sys
 import tempfile

@@ -28,7 +28,7 @@
 from __future__ import annotations
 
 import html
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 
 # --------------------------------------------------------------------------
@@ -289,7 +289,6 @@ def render_invoice_html(data: Dict[str, Any]) -> str:
 
 if __name__ == "__main__":
     # 自测：用安徽专票票样数据渲染演示
-    import json
     import sys
     sample = {
         "header": {"invoice_type": "增值税专用发票", "invoice_code": "3400000000",

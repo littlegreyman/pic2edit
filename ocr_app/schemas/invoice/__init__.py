@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from . import extract as _ex
 from . import html_layout as _html

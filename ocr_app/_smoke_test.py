@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import Config, RESOLUTION_MODES, PROMPT_TEMPLATES
 from backends import OllamaBackend, TransformersBackend, LlamaCppBackend
-from utils.input_prep import prepare_pdf, prepare_tif, prepare_input, InputItem
+from utils.input_prep import prepare_pdf, prepare_tif, prepare_input
 from utils.export_docx import md_to_docx, save_text
 from utils.logging_setup import setup_logging, get_logger, env_summary, log_env_on_error
 
@@ -55,7 +55,6 @@ check("prompt templates present", set(PROMPT_TEMPLATES) >= {"markdown", "ocr", "
 
 # 2. PDF: whole-page render (pypdfium2)
 try:
-    import pypdfium2  # Apache-2.0
     PDF_OK = True
 except Exception:
     PDF_OK = False

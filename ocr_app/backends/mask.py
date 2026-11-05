@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 # 增值税专用/普通发票密码区通用预设（归一化坐标 x0, y0, x1, y1）
 DEFAULT_VAT_RECT: Tuple[float, float, float, float] = (0.50, 0.20, 0.95, 0.44)

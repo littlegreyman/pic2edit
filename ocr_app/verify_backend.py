@@ -32,7 +32,7 @@ sys.path.insert(0, HERE)
 
 from backends.llamacpp_backend import LlamaCppBackend
 from utils.input_prep import prepare_input
-from config import Config, PROMPT_TEMPLATES
+from config import Config
 
 # 真实样例图片的默认路径：使用中性相对名，不在源码中硬编码任何个人路径/用户名。
 # 开发者本机可用环境变量 PIC2EDIT_CLINIC 指向真实样例（例如

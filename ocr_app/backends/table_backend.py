@@ -4,8 +4,6 @@
 注：pix2text-table-rec 的具体 API 随版本变化，recognize() 返回表格的 HTML/LaTeX
 文本；部署到桌面后需用真实表格图验证一次。
 """
-import os
-import sys
 
 
 class TableRecognizer:

@@ -73,7 +73,7 @@ def lines() -> List[Dict[str, Any]]:
 
 
 def text() -> str:
-    return "\n".join(l["text"] for l in lines())
+    return "\n".join(ln["text"] for ln in lines())
 
 
 def page() -> Dict[str, Any]:

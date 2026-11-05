@@ -10,7 +10,7 @@ if HERE not in sys.path:
 
 from utils.export_formats import (
     ext_from_filter, export_markdown, export_text, export_docx,
-    export_html, export_json, export_by_ext, FILTERS,
+    export_html, export_json, export_by_ext,
 )
 
 

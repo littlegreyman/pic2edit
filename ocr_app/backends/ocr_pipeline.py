@@ -11,8 +11,11 @@ GUI 现在通过 OcrWorker -> 本流水线处理每个图像项，因此“零�
 生效。早期 GUI 曾直接把 VLM 当唯一后端（见 gui._build_backend / worker），导致干净
 中文页也被迫走会幻觉的 VLM，混入英文 boilerplate（如“美国宪法第一修正案”）。
 """
+from __future__ import annotations
+
 import os
 import sys
+from typing import TYPE_CHECKING, Optional, Sequence
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -21,6 +24,10 @@ from utils.input_prep import InputItem  # noqa: E402  (used as doc/type referenc
 from backends.discriminative_backend import DiscriminativeBackend  # noqa: E402
 from utils.logging_setup import get_logger  # noqa: E402
 from config import ModelParams  # noqa: E402
+
+if TYPE_CHECKING:  # 仅用于类型标注，避免运行期循环导入
+    from backends.base import OCRBackend
+    from backends.routing import RoutingPolicy
 
 _logger = get_logger("ocr_pipeline")
 
@@ -46,7 +53,7 @@ _HALLUCINATION_MARKERS = [
 ]
 
 
-def _vlm_backend(url, model):
+def _vlm_backend(url: str, model: str) -> Optional[OCRBackend]:
     try:
         from backends.llamacpp_backend import LlamaCppBackend
         b = LlamaCppBackend(url, model)
@@ -56,7 +63,7 @@ def _vlm_backend(url, model):
         return None
 
 
-def _quality_ok(md):
+def _quality_ok(md: Optional[str]) -> bool:
     if not md or len(md.strip()) < 5:
         return False
     han = sum(1 for c in md if '\u4e00' <= c <= '\u9fff')
@@ -64,7 +71,7 @@ def _quality_ok(md):
     return (han + lat) >= 5
 
 
-def _looks_hallucinated(md):
+def _looks_hallucinated(md: Optional[str]) -> bool:
     """VLM 兜底输出疑似生成式幻觉（语义注入）时返回 True。
 
     仅命中已知英文 boilerplate 才判为幻觉——精确、不会对正常英文文档误伤。
@@ -79,9 +86,17 @@ def _looks_hallucinated(md):
     return False
 
 
-def run(items, vlm_backend=None, server_url="http://localhost:8080", model="deepseek-ocr",
-        use_vlm_fallback=True, mode="markdown", skip_discriminative=False,
-        prompt=None, guard_hallucination=True, model_params=None, policy=None):
+def run(items: Sequence[InputItem],
+        vlm_backend: Optional[OCRBackend] = None,
+        server_url: str = "http://localhost:8080",
+        model: str = "deepseek-ocr",
+        use_vlm_fallback: bool = True,
+        mode: str = "markdown",
+        skip_discriminative: bool = False,
+        prompt: Optional[str] = None,
+        guard_hallucination: bool = True,
+        model_params: Optional[ModelParams] = None,
+        policy: Optional[RoutingPolicy] = None) -> Sequence[InputItem]:
     """填充每个 InputItem.result（Markdown）。返回 items。
 
     vlm_backend: 兜底用的 VLM 后端实例（如 LlamaCppBackend / OllamaBackend /

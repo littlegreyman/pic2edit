@@ -18,7 +18,7 @@ md/docx 走 markdown、txt 走制表符、html 走版式还原，三者的排版
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Dict, Optional, Protocol, Sequence, runtime_checkable
 
 # 一页的输入上下文：文本 +（可选）OCR 行框与图像尺寸。
 #   - text   判别式/VLM 得到的正文（必有）

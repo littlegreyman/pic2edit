@@ -342,7 +342,7 @@ def run():
 
     # ---- 2) 模型 ----
     if model_ready():
-        print(f"[skip] model already present in models/")
+        print("[skip] model already present in models/")
     else:
         print("\n[2/2] Downloading DeepSeek-OCR GGUF (Q4_K_M) + mmproj ...")
         if not download_model():

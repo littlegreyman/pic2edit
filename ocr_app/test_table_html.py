@@ -81,7 +81,6 @@ def test_render_html_colspan_merges():
 
 
 def test_md_to_docx_backward_compat():
-    import tempfile
     d = tempfile.mkdtemp()
     p = os.path.join(d, "out.docx")
     md_to_docx("# 标题\n\n一段中文正文。\n\n| a | b |\n|---|---|\n| 1 | 2 |\n", p)
