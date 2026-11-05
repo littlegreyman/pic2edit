@@ -20,6 +20,7 @@ from config import Config, RESOLUTION_MODES, PROMPT_LABELS, ModelParams, MODEL_P
 from backend_api import OllamaBackend, TransformersBackend, LlamaCppBackend
 from backend_api import ServerStarter, EngineLauncher
 from worker import OcrWorker
+from document_controller import DocumentController, Selection
 from utils.input_prep import prepare_input, InputItem, InputDocument
 from utils.export_docx import md_to_docx, save_text, md_pages_to_docx
 from utils.assemble import assemble_document
@@ -428,8 +429,8 @@ class MainWindow(QMainWindow):
             mp = ls.get("model_params")
             if isinstance(mp, dict):
                 self.cfg.model_params = ModelParams(**mp)
-        self.items: list = []           # 扁平图像项（供 OcrWorker / 导出使用）
-        self.documents: list = []       # 文档分组（InputDocument），供树形展示/整文档导出（P0 起）
+        # 文档编排的事实源（无 Qt 依赖，见 document_controller）：树只是它的视图。
+        self.controller = DocumentController()
         self.page_tree_items: list = [] # 与 self.items 平行：每个图像项的树子节点（更新状态用）
         self.current = -1
         self.worker = None
@@ -444,6 +445,17 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("图片转可编辑文档（DeepSeek-OCR 本地离线）")
         self.resize(1100, 720)
         self._build_ui()
+
+    # ---------- 模型视图（事实源在 DocumentController）----------
+    @property
+    def items(self) -> list:
+        """扁平图像项（只读视图；增删/移动一律走 ``self.controller``）。"""
+        return self.controller.items
+
+    @property
+    def documents(self) -> list:
+        """文档分组（只读视图；增删/移动一律走 ``self.controller``）。"""
+        return self.controller.documents
 
     # ---------- UI ----------
     def _build_ui(self):
@@ -609,8 +621,12 @@ class MainWindow(QMainWindow):
         self._add_paths(sorted(files))
 
     def _add_document(self, doc: InputDocument):
-        """把一个 InputDocument（源文件）挂到树：顶层项=文档，子项=各页。"""
-        self.documents.append(doc)
+        """把一个 InputDocument（源文件）挂到树：顶层项=文档，子项=各页。
+
+        模型先行（controller 登记），随后增量补树节点——避免增删时整树重建，
+        保留已有的展开状态与选择。
+        """
+        self.controller.add_document(doc)
         top = QTreeWidgetItem(self.tree_widget)
         label = doc.name + (f"  （{len(doc.pages)} 页）" if doc.is_multi else "")
         top.setText(0, label)
@@ -618,11 +634,10 @@ class MainWindow(QMainWindow):
         # 多页文档默认展开，方便直接看到页；单页也展开（只有一个子项）
         top.setExpanded(True)
         for it in doc.pages:
-            self.items.append(it)
             child = QTreeWidgetItem(top)
             child.setText(0, it.name)
             child.setData(0, Qt.UserRole, it)                 # 子项存 InputItem
-            child.setData(0, Qt.UserRole + 1, len(self.items) - 1)  # 子项存扁平索引
+            child.setData(0, Qt.UserRole + 1, self.controller.index_of(it))
             self.page_tree_items.append(child)
 
     def _add_paths(self, paths):
@@ -646,24 +661,35 @@ class MainWindow(QMainWindow):
 
     # ---------- 列表管理（仅文档级）----------
     def _reindex(self):
-        """以树为唯一事实源，重建扁平 self.items / self.page_tree_items，
-        并重写子项扁平索引 (UserRole+1)，同步 self.documents 顺序。
+        """从模型重建树视图（保留旧名，供既有调用点/测试使用）。"""
+        self._rebuild_tree()
 
-        删除 / 移动 / 清空后调用，确保扁平索引与树一致。
+    def _rebuild_tree(self):
+        """按 controller 的文档顺序整树重渲染，并重写子项扁平索引 (UserRole+1)。
+
+        方向是**单向**的：模型 → 视图。此前 ``_reindex`` 反向扫树重建 ``items``，
+        等于让树当事实源，任何一处漏同步都会让扁平索引与界面悄悄错位。
+        重建期间阻塞信号，避免 clear()/插入过程中触发选择变更回调。
         """
-        self.items = []
-        self.page_tree_items = []
-        self.documents = []
-        for ti in range(self.tree_widget.topLevelItemCount()):
-            top = self.tree_widget.topLevelItem(ti)
-            doc = top.data(0, Qt.UserRole)
-            self.documents.append(doc)
-            for ci in range(top.childCount()):
-                child = top.child(ci)
-                it = child.data(0, Qt.UserRole)
-                child.setData(0, Qt.UserRole + 1, len(self.items))
-                self.items.append(it)
-                self.page_tree_items.append(child)
+        self.tree_widget.blockSignals(True)
+        try:
+            self.tree_widget.clear()
+            self.page_tree_items = []
+            for doc in self.controller.documents:
+                top = QTreeWidgetItem(self.tree_widget)
+                label = doc.name + (f"  （{len(doc.pages)} 页）" if doc.is_multi else "")
+                top.setText(0, label)
+                top.setData(0, Qt.UserRole, doc)
+                top.setExpanded(True)
+                for it in doc.pages:
+                    child = QTreeWidgetItem(top)
+                    child.setText(0, it.name)
+                    child.setData(0, Qt.UserRole, it)
+                    child.setData(0, Qt.UserRole + 1, self.controller.index_of(it))
+                    self.page_tree_items.append(child)
+        finally:
+            self.tree_widget.blockSignals(False)
+        self._update_list_buttons()
 
     def _update_list_buttons(self):
         """根据当前选择更新列表管理按钮可用状态。
@@ -717,10 +743,10 @@ class MainWindow(QMainWindow):
         )
         if ret != QMessageBox.StandardButton.Yes:
             return
-        for t in top_items:
-            self.tree_widget.takeTopLevelItem(
-                self.tree_widget.indexOfTopLevelItem(t)
-            )
+        # top_items 是树节点；删除按**文档身份**交给 controller，再单向重渲染树
+        self.controller.remove_documents(
+            [tw.data(0, Qt.UserRole) for tw in top_items]
+        )
         self._reindex()
         if self.items:
             self.tree_widget.setCurrentItem(self.tree_widget.topLevelItem(0))
@@ -748,15 +774,16 @@ class MainWindow(QMainWindow):
                 "请只选中一个文档顶层项。"
             )
             return
-        t = top_items[0]
-        idx = self.tree_widget.indexOfTopLevelItem(t)
-        new = idx + delta
-        if new < 0 or new >= self.tree_widget.topLevelItemCount():
-            return
-        self.tree_widget.takeTopLevelItem(idx)
-        self.tree_widget.insertTopLevelItem(new, t)
+        doc = top_items[0].data(0, Qt.UserRole)  # 树节点 -> 文档
+        if not self.controller.move_document(doc, delta):
+            return  # 越界 / 未找到：no-op
         self._reindex()
-        self.tree_widget.setCurrentItem(t)
+        # 重建后顶层节点是新建对象，按文档身份找回原文档再选中
+        for i in range(self.tree_widget.topLevelItemCount()):
+            ti = self.tree_widget.topLevelItem(i)
+            if ti.data(0, Qt.UserRole) is doc:
+                self.tree_widget.setCurrentItem(ti)
+                break
         self._update_list_buttons()
 
     def clear_all(self):
@@ -772,7 +799,7 @@ class MainWindow(QMainWindow):
         )
         if ret != QMessageBox.StandardButton.Yes:
             return
-        self.tree_widget.clear()
+        self.controller.clear()
         self._reindex()
         self.current = -1
         self.editor.clear()
@@ -790,7 +817,9 @@ class MainWindow(QMainWindow):
             # 顶层（文档）被选中：预览其第一页
             if obj.pages:
                 page = obj.pages[0]
-                self._show_page(page, self.items.index(page))
+                idx = self.controller.index_of(page)
+                if idx >= 0:
+                    self._show_page(page, idx)
         else:
             # 子项（页）被选中
             idx = current.data(0, Qt.UserRole + 1)
@@ -828,9 +857,12 @@ class MainWindow(QMainWindow):
 
     # ---------- 选择收集（树形 -> 扁平索引）----------
     def _gather_selection(self):
-        """收集当前树选择。
+        """把 Qt 树选择翻译成 ``(top_docs, child_pages)``。
 
-        返回 (top_docs, child_pages)：
+        本方法只做「读控件 → 纯数据」的翻译，不含任何编排规则；规则全在
+        ``DocumentController.build_units`` 里，因此可以脱离 Qt 单测。
+
+        返回 ``(top_docs, child_pages)``：
         - top_docs: 被选中的“文档级（顶层）”InputDocument 列表；
         - child_pages: 被选中的“页级（子项）”列表，元素为 (doc, item, flat_index)。
         """
@@ -842,40 +874,24 @@ class MainWindow(QMainWindow):
                 top_docs.append(obj)
             else:
                 doc = tw.parent().data(0, Qt.UserRole)
-                idx = tw.data(0, Qt.UserRole + 1)
+                idx = self.controller.index_of(obj)
                 child_pages.append((doc, obj, idx))
         return top_docs, child_pages
 
     def _doc_flat_indices(self, doc: InputDocument):
         """返回该文档所有页的 (item, flat_index) 列表（保持页序）。"""
-        return [(it, self.items.index(it)) for it in doc.pages]
+        return self.controller.doc_flat_indices(doc)
 
     def _build_units(self, top_docs, child_pages):
         """把选择规约为“转换单元”列表，每个单元 = (doc, [flat_index,...])。
 
-        规则：
-        - 选中顶层文档 -> 转换该文档全部页（忽略二级选择）；
-        - 仅选中二级页 -> 按文档分组，把同文档所选页作为一单元（多页则合并导出）；
-        - 跨源文档多选二级页 -> 返回 None（不允许）。
+        规则见 ``DocumentController.build_units``（整篇优先 / 同文档选页按页序 /
+        跨源返回 None），此处仅做参数适配，避免规则在两处各写一遍。
         """
-        units = []
-        covered = set()
-        for doc in top_docs:
-            idxs = [i for _, i in self._doc_flat_indices(doc)]
-            units.append((doc, idxs))
-            covered.add(id(doc))
-        by_doc = {}
-        for doc, it, idx in child_pages:
-            if id(doc) in covered:
-                continue  # 该文档已按整文档处理
-            by_doc.setdefault(id(doc), (doc, []))[1].append((it, idx))
-        if len(by_doc) > 1:
-            return None  # 跨源多选，禁止
-        for _did, (doc, lst) in by_doc.items():
-            order = {it: idx for it, idx in lst}
-            idxs = [order[it] for it in doc.pages if it in order]
-            units.append((doc, idxs))
-        return units
+        return self.controller.build_units(Selection(
+            docs=tuple(top_docs),
+            pages=tuple((doc, it) for doc, it, _idx in child_pages),
+        ))
 
     # ---------- 转换 ----------
     def convert_selected(self):
