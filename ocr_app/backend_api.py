@@ -21,6 +21,9 @@ GUI 与 Skill 两个前端都**只应通过本模块**访问 OCR 后端能力，
   ``schema_css``）：schema 的发现、选择、抽取、渲染。前端只知道
   「有三个态：none / auto / <id>」，不需要知道有哪些凭证类型，更不需要
   在代码里 import 它们——新增类型靠往目录里丢文件，不改前端。
+- 忠实版式（``page_with_image`` / ``faithful_css``）：只规定数据、不给版式的标准
+  （如审计数据规范系列）需要"按原件版式复原"，做法是原图垫底 + 按坐标叠透明文字，
+  而不是用 HTML 重排版面。
 - 后端级预处理能力（``locate_password_region`` / ``apply_password_mask`` /
   ``detect_handwriting``）与按显存选模型（``choose_vlm`` / ``describe_vlm_choice``）：
   这些此前只存在于 skill 私有脚本里，GUI 完全没有，导致同一份输入从不同入口进来
@@ -50,6 +53,14 @@ from utils.export_docx import save_text, md_to_docx, md_pages_to_docx
 # 表格能力（两门户同源）
 from utils.table_utils import kv_text_to_markdown_table
 from utils.table_layout import build_table_from_lines
+
+# 忠实版式（原图垫底 + 坐标文字层）：只规定数据、不给版式的标准走这条路
+from utils.faithful_html import (
+    build_overlay_html,
+    embed_image,
+    faithful_css,
+    page_with_image,
+)
 
 # 后端级预处理能力（此前只存在于 skill 私有脚本里，GUI 完全没有）
 from backends.mask import (
@@ -151,6 +162,11 @@ __all__ = [
     # 表格
     "kv_text_to_markdown_table",
     "build_table_from_lines",
+    # 忠实版式（原图垫底）
+    "build_overlay_html",
+    "embed_image",
+    "faithful_css",
+    "page_with_image",
     # 引擎 CLI 适配
     "discover_engine",
     "build_engine_command",

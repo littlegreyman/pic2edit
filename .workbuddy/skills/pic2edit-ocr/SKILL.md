@@ -23,6 +23,13 @@ agent_created: true
      - `txt` / `docx`：同 `md` 的分派逻辑（txt 用 `标签：值` + TAB，docx 走 md→docx）。
    - 识别模式 `--mode`：**这是 pic2edit 的识别流水线参数，只影响"怎么识别"，不影响"渲染成什么"**。表格 / 键值表 → `table`；图表 / 公式 → `figure`；纯文本 OCR → `ocr`；默认 → `markdown`。
    - 模型档位 `--vlm-model`：`auto`（默认，按显存自动选）/ `q8` / `q4` / `bf16` / `cpu`。
+   - 凭证 schema `--schema`：**三态，默认 `auto`**。
+     - `auto`：按优先级逐页判定，命中哪种凭证就用哪套字段与版式（发票、固定资产卡片…）；
+     - `none`：完全不启用 schema，一律按通用文本 / 原图版面输出（"没有 schema 的世界"）；
+     - `<id>`：只按指定 schema 抽取（如 `invoice`），未命中时告警但不中断。
+     不确定有哪些可用时先跑 `--list-schemas` 列出（含 id / 版本 / 来源 / 标题）。
+     用户明确说"这不是发票 / 不要按票面格式"时用 `--schema none`；
+     用户明确指定票种时用具体 id，避免 auto 误判。
    - 可选开关：`--cache`（按内容哈希缓存，重复预处理秒回）；`--prov`（每页加 `<!-- engine:xxx -->` 溯源注释）。
 3. 用项目虚拟环境运行 helper（`<skill>/scripts/pic2edit_convert.py` 相对本技能目录）：
    - 依赖 venv 在 **`ocr_app/.venv`**（主环境，含 requests / Pillow / pypdfium2 / python-docx / PySide6 / rapidocr>=3.10）。判别式 RapidOCR 由 helper 经**子进程**调用 `ocr_app/.venv`（rapidocr 已支持 Python 3.14，无需独立 `.venv_ocr`），无需手动切 venv。
@@ -37,6 +44,11 @@ agent_created: true
      ocr_app/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py <附件路径> --format <fmt> --mode <mode> [--cache] [--prov]
      # 结构化溯源输出（推荐用于入库前校验）
      ocr_app/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py <附件路径> --format json --prov
+     # 强制按指定凭证类型抽取 / 完全不用 schema
+     ocr_app/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py <附件路径> --schema invoice
+     ocr_app/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py <附件路径> --schema none
+     # 看看本机有哪些 schema
+     ocr_app/.venv/bin/python3 <skill>/scripts/pic2edit_convert.py --list-schemas
      ```
    - helper 会自动定位 `ocr_app`：**优先读环境变量 `PIC2EDIT_OCR_APP` / `PIC2EDIT_ROOT`**；未设置时按常见用户目录（`~/Documents/pic2edit`、`~/文档/pic2edit`、`~/projects/pic2edit` 等）兜底，无需手动 `cd`。若你的项目不在这些位置，设置上述环境变量最稳妥。
    - 容器内无 GPU 自测时追加 `--gpu-layers 0`（CPU 模式）；用户原生桌面**不加**（自动用 GPU）。
@@ -50,7 +62,7 @@ agent_created: true
 | 场景 | md | html | json |
 | --- | --- | --- | --- |
 | **有 schema**（发票；后续逐步加入证书等） | 中文栏目 + 8 列明细表 + `（未识别）` | **严格按 schema 版式**（无坐标表、无原文） | 含 `schema` 字段 |
-| **无 schema**（普通文档 / 图片） | 可读识别文本 | 按 OCR 坐标还原原图版面 | 含 `lines` 坐标 |
+| **无 schema**（普通文档 / 图片） | 可读识别文本 | **原图垫底 + 按坐标叠透明文字**（文字可选中复制，等于可搜索 PDF） | 含 `lines` 坐标 |
 
 - **未识别字段一律写 `（未识别）`**（红色斜体 `.inv-miss`）。**不用破折号**：破折号会被读成"该字段本来就空"，而事实是"没识别出来"——两者对复核人是完全不同的动作。
 - **原始 OCR 全文不进 md/html**，只落 LOG 目录（见下）。
@@ -138,7 +150,12 @@ agent_created: true
 - 抽取**以 OCR 坐标为主、明文正则为辅**：发票是固定版式，"标签在左、值在右同排"是硬约束，比在粘连文本里猜可靠得多。
 - 明细表按「表头锚点（名称/规格/单位）+ 列心聚类」对齐 8 个 schema 列。**某行缺列时留空，绝不左移**——错位的数据比缺失的数据更危险。
 - **宁可不出、也不出错**：定位不到锚点列、或税率列不像税率时，直接返回空明细（页面上显示 `（未识别）`），不臆造。
-- 新增一种凭证 = 新增一套 schema + 一个 `_extract_*` + 一个渲染分支；框架已就位，逐个追加即可（证书等尚未加入）。
+- **新增一种凭证不再需要改转换代码**：往 `ocr_app/schemas/<id>/` 丢三个文件
+  （`manifest.json` + `schema.yaml` + 可选 `layout.html`）即可，注册表自动发现；
+  用户级目录 `~/.pic2edit/schemas/` 同样生效，同名 id 覆盖内置。
+  制作与校验见 `ocr_app/schemas/README.md` 与 `python -m schemas.cli list|validate|test|new`。
+- 发票是**插件式** schema（`entry: __init__.py`）：版式多变、需要几何推理，声明式
+  表达不了，故保留 Python 实现。它是"复杂场景走插件"的参考，不是声明式要追赶的目标。
 
 ### 字段可信度守卫（宁可留空，不可错填）
 
@@ -325,10 +342,20 @@ agent_created: true
 - 缓存命中分支也会再过一遍护栏（幂等），避免修复前写入的脏缓存把循环「复活」。
 - 命中时打印 `[warn] 检出模型输出重复循环(N次)，已截断防止噪声入库`。
 
-## 无 schema 时的「按原图还原版面」
+## 无 schema 时：优先「原图垫底」，而不是重排版面
 - 仅当**没有命中任何凭证 schema**（普通文档 / 图片）时启用。命中 schema 的一律走 schema 版式，不再叠加坐标表——早期把两者并列，导致发票页面上同时出现"版式"和"坐标碎片表"，反而不可读。
-- 重建基于整页 OCR 坐标：按 y 聚类成行、行内按 x 升序，保留原始阅读顺序；列网格由文本块左右边缘合并而来，合并单元格以「几何覆盖」保守推断（`colspan` = 覆盖的列中心数，`rowspan` = 覆盖的行中心数），并裁剪行首/行尾全空列。
-- 没有坐标数据（例如拿不到行框）时，退化为按识别文本呈现，并在标题里注明"本页无坐标数据，无法还原版面"。
+- **三档，从保真度高的往下退**（实现在内核 `utils/faithful_html.py`，两侧共用）：
+  1. **原图垫底 + 按坐标叠透明文字**：把扫描页当背景图（base64 内嵌，单文件可分发），
+     OCR 行框的 `x0/y0` 原样落到每个 `<span>` 的 `left/top` 上，文字透明但**可选中、可复制、
+     可搜索**——本质是"可搜索 PDF"的做法。位置不是推断出来的，所以不会错版。
+     页面顶部有「显示文字层」开关，勾上即可核对叠字是否对齐。
+  2. 有坐标但没有原图（如缓存来自别处）：按坐标聚成表格（原有实现）。
+  3. 连坐标都没有（走 VLM 路径）：按识别文本呈现，标题注明"本页无坐标数据"。
+- 为什么优先 1 而不是 HTML 重排：重排要推断段落、字号、行距、表格结构，任何一处判错
+  就是错版；而"只有数据标准、没有官方版式"的场景（如审计数据规范系列）恰恰要求
+  "尽量按原件版式"，垫底是唯一不引入推断的做法。
+- 局限：只有坐标没有语义（不识别"第几列"，不合并单元格）；导出文件体积约为原图 1.33 倍；
+  舞台按原图像素固定尺寸，超宽时横向滚动，不做自适应缩放。
 
 ## 已知局限（诚实记录）
 - **单位列常缺**：发票的单位格子窄而扁，OCR 会把相邻两三行的单位**并成一个竖框**（如 `吨吨`）。这种跨行的合并框不能可靠归属到某一具体行，按"宁可留空不可错位"原则一律不留。若表头也没探到「单位」列（`meta.item_columns` 不含 `unit`），渲染层直接**不输出该列**，而不是每行挂一个 `（未识别）`。

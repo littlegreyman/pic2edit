@@ -167,3 +167,46 @@ def test_html_only_embeds_css_of_hit_schemas(skill, tmp_path):
     out = skill._render(data, "html", str(tmp_path / "i.html"), "in.pdf", False, "markdown")
     html = open(out, encoding="utf-8").read()
     assert "inv-wrap" in html, "命中发票 schema 时必须带上票面 CSS"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4：无 schema 的页面走"原图垫底 + 坐标文字层"
+# ---------------------------------------------------------------------------
+def _overlay_data(tmp_path):
+    Image = pytest.importorskip("PIL.Image")
+    img = tmp_path / "page.png"
+    Image.new("RGB", (200, 120), (255, 255, 255)).save(img)
+    return {"pages": [{
+        "page": 1, "raw_text": "只有数据标准、没有版式的页面",
+        "text": "只有数据标准、没有版式的页面",
+        "lines": [{"text": "只有数据标准", "x0": 10, "y0": 20, "x1": 110, "y1": 40},
+                  {"text": "没有版式的页面", "x0": 10, "y0": 50, "x1": 130, "y1": 70}],
+        "img_w": 200, "img_h": 120, "image": str(img), "engine": "disc"}]}
+
+
+def test_html_uses_image_overlay_when_no_schema(skill, tmp_path):
+    """有原图 + 有坐标 → 走垫底，而不是用 HTML 重排一遍版面。"""
+    from schemas import MODE_NONE, apply_schemas
+
+    data = _overlay_data(tmp_path)
+    apply_schemas(data["pages"], MODE_NONE)
+    out = skill._render(data, "html", str(tmp_path / "o.html"), "in.png", False, "markdown")
+    html = open(out, encoding="utf-8").read()
+
+    assert "data:image/png;base64," in html, "底图必须内嵌，否则导出的 html 是坏图"
+    assert 'class="fx-stage"' in html
+    assert "left:10.0px" in html and "top:20.0px" in html, "坐标要原样落到文字层"
+
+
+def test_html_without_image_falls_back_to_table(skill, tmp_path):
+    """没有原图就不能垫底；此时应退回按坐标重建，而不是输出白底看不见字。"""
+    from schemas import MODE_NONE, apply_schemas
+
+    data = _overlay_data(tmp_path)
+    data["pages"][0].pop("image")
+    apply_schemas(data["pages"], MODE_NONE)
+    out = skill._render(data, "html", str(tmp_path / "n.html"), "in.png", False, "markdown")
+    html = open(out, encoding="utf-8").read()
+
+    assert 'class="fx-stage"' not in html
+    assert "只有数据标准" in html, "退化为文本呈现时，正文不能丢"

@@ -151,6 +151,8 @@ from backend_api import (  # noqa: E402
     detect_handwriting,
     choose_vlm,
     describe_vlm_choice,
+    page_with_image,
+    faithful_css,
 )
 
 # 手写/印刷预筛（P0 路由闸，纯 numpy + cv2 无模型；MIT 友好，独立重新实现）
@@ -570,11 +572,20 @@ def _build_page_table(cells, W, H):
 
 
 def _html_faithful_block(page):
-    """无 schema 时的 HTML 片段：按 OCR 坐标尽量还原原图版面（标题/表头/脚注都在坐标里）。
+    """无 schema 时的 HTML 片段：尽量按**原件版式**复原这一页。
 
-    没有坐标数据（例如走 VLM 路径拿不到行框）时退化为按识别文本呈现 —— 此时"文本"
-    就是本页的全部内容，不是追溯用的兜底噪声。
+    三档，从保真度高的往下退：
+      1. 原图垫底 + 按坐标叠透明文字层（``page_with_image``）——位置是 OCR 给的，
+         不是猜的，文字仍可选中/复制；这就是"可搜索 PDF"的做法。
+      2. 有坐标但没有原图（例如缓存来自别处）：按坐标聚成表格。
+      3. 连坐标都没有（走 VLM 路径）：直接呈现识别文本。
+
+    注意 1 需要 ``page["image"]``；只在导出 html 时才会被填进来（见 convert）。
     """
+    overlay = page_with_image(page, uid=f"p{page.get('page', 0)}",
+                              title=f"第 {page.get('page', '?')} 页")
+    if overlay:
+        return f"<section>{overlay}</section>"
     lines = page.get("lines") or []
     W, H = page.get("img_w") or 0, page.get("img_h") or 0
     if lines and W and H:
@@ -670,7 +681,8 @@ def _render(data, fmt, out_path, input_path, prov, mode):
     if fmt == "html":
         # 附加样式按「本次真正命中的 schema」取，而不是永远拼发票的 CSS：
         # 没有命中任何 schema 时，导出的 html 不该带着一套用不上的票面样式。
-        extra_css = schema_css(pages)
+        # 忠实版式（原图垫底）的样式是通用的，无论有没有命中 schema 都可能用到
+        extra_css = "\n".join(c for c in (schema_css(pages), faithful_css()) if c)
         text = ("<!DOCTYPE html>\n<html lang='zh-CN'><head><meta charset='utf-8'>"
                 "<title>识别结果</title>"
                 f"<style>{HTML_CSS}\n{extra_css}</style></head>"
@@ -933,7 +945,7 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
                 imgp = getattr(it, "image_path", None)
                 if imgp and os.path.isfile(imgp):
                     lines, W, H = _rapidocr_lines(imgp)
-            pages.append({
+            page = {
                 "page": i + 1,
                 "text": (it.result or ""),
                 "raw_text": raw_results.get(id(it), ""),
@@ -941,7 +953,14 @@ def convert(input_path, fmt, mode, url, gpu_layers, out_path, stop_server,
                 "lines": lines,
                 "img_w": W,
                 "img_h": H,
-            })
+            }
+            # 只有导出 html 才带原图：垫底要用它内嵌成 data URI。别的格式带上是白占
+            # 内存，json 导出更会顺手把临时路径写进产物。
+            if fmt == "html":
+                imgp = getattr(it, "image_path", None)
+                if imgp and os.path.isfile(imgp):
+                    page["image"] = imgp
+            pages.append(page)
 
         # 逐页抽取凭证 schema：一处抽取，同时满足「渲染严格按 schema」与「json 供 RAG 接入」。
         # 注意：schema 是**派生数据**，绝不写进缓存——否则改进抽取逻辑后，缓存命中的旧
