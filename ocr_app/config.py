@@ -94,6 +94,9 @@ class Config:
     # 通用
     resolution: str = "Gundam"
     prompt_template: str = "markdown"
+    # 凭证 schema 三态：none（不使用）/ auto（按页自动判定）/ <schema id>（强制指定）。
+    # 默认 auto 与 Phase 3.2 之前的行为等价（那时对每页无条件跑一次发票判定）。
+    schema_mode: str = "auto"
     output_dir: str = ""               # 导出目录，空则用输入文件同目录
     # 模型采样参数（GUI 设置面板可改；默认值见 ModelParams 说明）
     model_params: ModelParams = field(default_factory=ModelParams)

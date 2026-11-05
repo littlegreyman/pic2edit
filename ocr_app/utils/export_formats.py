@@ -7,6 +7,10 @@
 - json     ：结构化 JSON（逐页 {index, name, text}），便于入库 / 二次处理。
 
 本模块只依赖纯文本结果（InputItem.result），不引入 Qt，故可被 headless 测试直接覆盖。
+
+凭证 schema（Phase 3.2）：页面上若命中了某个 schema（``InputItem.schema`` 非空），
+该页的交付文本改为**严格按 schema 排版**（字段化 / 票面版式），而不是 OCR 原文。
+未命中的页一切照旧——这是「有 schema 更好、没 schema 也能用」的落地方式。
 """
 import json
 import os
@@ -15,6 +19,8 @@ from datetime import datetime
 from typing import List
 
 import markdown as _md_lib
+
+from schemas import render_schema, schema_css
 
 from .assemble import assemble_document
 from .export_docx import save_text, md_pages_to_docx
@@ -45,6 +51,33 @@ def ext_from_filter(filt: str) -> str:
     return m.group(1).lower() if m else ""
 
 
+def _page_dict(it) -> dict:
+    """把 InputItem 投影成 schema 渲染需要的 page 字典。
+
+    ``render_schema`` 只认这个形状（纯数据），这样 GUI 与 Skill 走的是**同一条**
+    渲染路径，不会出现「同一张发票 GUI 一套、CLI 另一套」。
+    """
+    text = getattr(it, "result", "") or ""
+    return {
+        "schema": getattr(it, "schema", None),
+        "schema_id": getattr(it, "schema_id", None),
+        "text": text,
+        "raw_text": text,
+        "lines": getattr(it, "lines", None) or [],
+        "img_w": getattr(it, "img_w", 0) or 0,
+        "img_h": getattr(it, "img_h", 0) or 0,
+    }
+
+
+def item_text(it, fmt: str = "md") -> str:
+    """单页交付文本：命中 schema 且渲染成功 → 用 schema 版式；否则原识别文本。"""
+    if getattr(it, "schema", None):
+        rendered = render_schema(_page_dict(it), fmt)
+        if rendered:
+            return rendered
+    return getattr(it, "result", "") or ""
+
+
 def _pages_data(pages: List) -> List[tuple]:
     """把 InputItem 列表展开为 [(index, name, text), ...]。
 
@@ -52,7 +85,7 @@ def _pages_data(pages: List) -> List[tuple]:
     """
     out = []
     for i, it in enumerate(pages, 1):
-        text = (getattr(it, "result", "") or "").strip()
+        text = item_text(it, "md").strip()
         name = getattr(it, "name", f"第{i}页")
         out.append((i, name, text))
     return out
@@ -60,17 +93,17 @@ def _pages_data(pages: List) -> List[tuple]:
 
 def export_markdown(pages: List, path: str):
     """导出为 Markdown（装配后的多页可读文本）。"""
-    save_text(assemble_document(pages), path)
+    save_text(assemble_document([item_text(it, "md") for it in pages]), path)
 
 
 def export_text(pages: List, path: str):
     """导出为纯文本（与 md 同源，保留分页标记供人/脚本阅读）。"""
-    save_text(assemble_document(pages), path)
+    save_text(assemble_document([item_text(it, "txt") for it in pages]), path)
 
 
 def export_docx(pages: List, path: str):
     """导出为 Word（每页之间插入真实分页符）。"""
-    md_pages_to_docx([(getattr(it, "result", "") or "") for it in pages], path)
+    md_pages_to_docx([item_text(it, "md") for it in pages], path)
 
 
 # ---- HTML 导出：复用已安装的 markdown 库，保证表格/列表/标题等忠实还原 ----
@@ -94,36 +127,61 @@ def export_html(pages: List, path: str):
     """导出为独立 HTML：每页一段 <section>，页内 Markdown 经 markdown 库转 HTML。
 
     表格走 markdown 的 ``tables`` 扩展、围栏代码走 ``fenced_code``，最大限度保留版面。
+    命中 schema 的页改用该 schema 的版式片段（如发票票面），并只拼接**实际用到**的
+    附加样式——没有命中任何 schema 时，导出的文件不该带一套用不上的票面 CSS。
     """
     blocks = []
-    for idx, name, text in _pages_data(pages):
-        if not text:
+    page_dicts = []
+    for idx, it in enumerate(pages, 1):
+        if not (getattr(it, "result", "") or "").strip():
             continue
-        body = _md_lib.markdown(text, extensions=["tables", "fenced_code"])
+        name = getattr(it, "name", f"第{idx}页")
+        pd = _page_dict(it)
+        page_dicts.append(pd)
+        if getattr(it, "schema", None):
+            body = render_schema(pd, "html")
+        else:
+            body = ""
+        if not body:
+            body = _md_lib.markdown(item_text(it, "md"),
+                                    extensions=["tables", "fenced_code"])
         blocks.append(
             f"<section class='page'>\n<h2 class='page-title'>第 {idx} 页 · {_esc_html(name)}</h2>\n{body}\n</section>"
         )
     if not blocks:
         blocks.append("<p>（无内容）</p>")
+    extra_css = schema_css(page_dicts)
     html = (
         "<!DOCTYPE html>\n<html lang='zh-CN'>\n<head>\n<meta charset='utf-8'>\n"
-        "<title>识别结果</title>\n<style>" + _HTML_CSS + "</style>\n</head>\n<body>\n"
+        "<title>识别结果</title>\n<style>" + _HTML_CSS + "\n" + extra_css + "</style>\n</head>\n<body>\n"
         + "\n".join(blocks) + "\n</body>\n</html>"
     )
     save_text(html, path)
 
 
 def export_json(pages: List, source: str, path: str):
-    """导出为结构化 JSON：逐页 {index, name, text}，附来源与时间戳，便于入库。"""
+    """导出为结构化 JSON：逐页 {index, name, text[, schema]}，附来源与时间戳，便于入库。
+
+    命中凭证 schema 的页额外带 ``schema_id`` 与结构化字段——这正是 RAG / 资料库
+    真正想要的部分（字段值可直接建索引），而不是一张图的 OCR 散文。
+    """
+    rows = []
+    for idx, name, text in _pages_data(pages):
+        row = {"index": idx, "name": name, "text": text}
+        it = pages[idx - 1] if idx - 1 < len(pages) else None
+        sid = getattr(it, "schema_id", None) if it is not None else None
+        doc = getattr(it, "schema", None) if it is not None else None
+        if sid and doc:
+            row["schema_id"] = sid
+            row["schema"] = doc
+        rows.append(row)
     data = {
         "source": source or "",
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "format": "json",
         "page_count": len(pages),
-        "pages": [
-            {"index": idx, "name": name, "text": text}
-            for idx, name, text in _pages_data(pages)
-        ],
+        "schema_pages": sum(1 for r in rows if r.get("schema_id")),
+        "pages": rows,
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

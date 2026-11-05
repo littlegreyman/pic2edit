@@ -19,6 +19,7 @@ import markdown
 from config import Config, RESOLUTION_MODES, PROMPT_LABELS, ModelParams, MODEL_PARAM_PRESETS
 from backend_api import OllamaBackend, TransformersBackend, LlamaCppBackend
 from backend_api import ServerStarter, EngineLauncher
+from backend_api import MODE_AUTO, MODE_NONE, list_schemas
 from worker import OcrWorker
 from document_controller import DocumentController, Selection
 from utils.input_prep import prepare_input, InputItem, InputDocument
@@ -481,6 +482,14 @@ class MainWindow(QMainWindow):
         self.template_combo.currentIndexChanged.connect(self._on_template_changed)
         toolbar.addWidget(self.template_combo)
 
+        # 凭证类型（schema 三态）：与「输出格式」同级——它决定**这次转换按哪套字段规则抽**，
+        # 而不是导出时才生效，所以必须放在主线可见的位置，不能塞进导出对话框。
+        toolbar.addWidget(QLabel("  凭证类型："))
+        self.schema_combo = QComboBox()
+        self._reload_schema_combo()
+        self.schema_combo.currentIndexChanged.connect(self._on_schema_changed)
+        toolbar.addWidget(self.schema_combo)
+
         # 列表操作控件（打开文件/打开文件夹/删除/上移/下移/清空）已移至左侧“待转换文档”上方。
 
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -601,6 +610,36 @@ class MainWindow(QMainWindow):
             self.cfg.prompt_template = key
             self.cfg.save()
             self.statusBar().showMessage(self._backend_status())
+
+    # ---------- 凭证类型（schema）----------
+    def _reload_schema_combo(self):
+        """按注册表重建下拉：自动 / 不使用 / 每个已发现的 schema。
+
+        失败只降级为空列表（只剩前两项），绝不因为某个 schema 包写坏就让窗口起不来。
+        """
+        cur = getattr(self.cfg, "schema_mode", MODE_AUTO) if hasattr(self, "cfg") else MODE_AUTO
+        try:
+            self.schema_combo.blockSignals(True)
+        except Exception:
+            pass
+        self.schema_combo.clear()
+        self.schema_combo.addItem("自动判定", MODE_AUTO)
+        self.schema_combo.addItem("不使用", MODE_NONE)
+        try:
+            for info in list_schemas():
+                self.schema_combo.addItem(f"{info['title']}（{info['id']}）", info["id"])
+        except Exception as e:
+            _logger.warning("加载凭证 schema 列表失败: %s", e)
+        idx = self.schema_combo.findData(cur)
+        self.schema_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.schema_combo.blockSignals(False)
+
+    def _on_schema_changed(self, _idx):
+        key = self.schema_combo.currentData()
+        if key and key != getattr(self.cfg, "schema_mode", None):
+            self.cfg.schema_mode = key
+            self.cfg.save()
+            _logger.info("凭证类型切换: %s", key)
 
     # ---------- 文件导入 ----------
     def open_files(self):
@@ -945,6 +984,7 @@ class MainWindow(QMainWindow):
             as_table=(self.cfg.prompt_template == "table"),
             prompt_template=self.cfg.prompt_template,
             model_params=self.cfg.model_params,
+            schema_mode=getattr(self.cfg, "schema_mode", MODE_AUTO),
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.item_done.connect(self._on_item_done)

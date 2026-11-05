@@ -7,6 +7,7 @@ from utils.logging_setup import get_logger, log_exception
 from utils.table_utils import kv_text_to_markdown_table
 from utils.table_layout import build_table_from_lines
 from backend_api import run as pipeline_run, RoutingPolicy, vmem_limited_gb, env_force_skip
+from backend_api import MODE_AUTO, apply_schemas
 
 _logger = get_logger("worker")
 
@@ -19,7 +20,7 @@ class OcrWorker(QThread):
 
     def __init__(self, backend: OCRBackend, items: list, prompt: str, indices: list,
                  as_table: bool = False, prompt_template: str = "markdown",
-                 model_params=None):
+                 model_params=None, schema_mode: str = MODE_AUTO):
         super().__init__()
         self.backend = backend
         self.items = items
@@ -29,6 +30,9 @@ class OcrWorker(QThread):
         self.as_table = as_table
         self.prompt_template = prompt_template
         self.model_params = model_params
+        # 凭证 schema 三态（none / auto / <id>）。默认 auto 与改写前行为等价：
+        # 改写前对每页无条件跑一次发票判定，auto 的语义正好是"逐页判定"。
+        self.schema_mode = schema_mode or MODE_AUTO
         self._disc = None  # 表格重建复用的判别式后端（冻结态进程内模型只加载一次）
         # 输出格式真正生效：
         # - 表格/图表/HTML表格 模式跳过判别式（RapidOCR 会压平/漏识别表格与图，交由 VLM 原生输出）；
@@ -71,11 +75,13 @@ class OcrWorker(QThread):
                     model_params=self.model_params,
                 )
                 text = item.result
+                raw_for_schema = text or ""
                 if self.as_table:
                     text = self._table_result(item, text)
                 else:
                     text = self._maybe_layout_table(item, text)
                 item.result = text
+                self._apply_schema(item, raw_for_schema)
                 item.status = "完成" if text else "失败"
                 _logger.info("OCR done: %s (%d/%d)", item.name, n, total)
             except Exception as e:
@@ -89,6 +95,39 @@ class OcrWorker(QThread):
             self.item_done.emit(idx, item.result)
         _logger.info("OCR job finished")
         self.worker_finished.emit()
+
+    # ---------- 凭证 schema ----------
+    def _apply_schema(self, item: InputItem, raw_text: str) -> None:
+        """按 schema 三态抽取本页字段，挂到 item 上供导出使用。
+
+        抽的是**表格化之前**的原始文本（``raw_text``）：表格模式会把"键：值"压成
+        表格，而 schema 要的是字段语义，压平后反而更难抽。
+        任何异常都只降级（本页当作未命中），绝不让 schema 把整次转换拖垮。
+        """
+        if self.schema_mode == "none":
+            return
+        page = {
+            "page": 1,
+            "text": raw_text,
+            "raw_text": raw_text,
+            "lines": getattr(item, "lines", None) or [],
+            "img_w": getattr(item, "img_w", 0) or 0,
+            "img_h": getattr(item, "img_h", 0) or 0,
+        }
+        try:
+            apply_schemas([page], self.schema_mode)
+        except KeyError as e:
+            # 配置里存了一个已经被删掉的 schema id：降级为不启用，并提示一次。
+            _logger.warning("schema 选择无效，本次改为不启用: %s", e.args[0])
+            self.schema_mode = "none"
+            return
+        except Exception as e:      # 单个 schema 抛错不应影响识别结果
+            _logger.warning("schema 抽取失败（%s）: %s", item.name, e)
+            return
+        item.schema = page.get("schema")
+        item.schema_id = page.get("schema_id")
+        if item.schema_id:
+            _logger.info("schema hit: %s -> %s", item.name, item.schema_id)
 
     # ---------- 表格重建（坐标 -> Markdown 表格）----------
     def _disc_backend(self):
@@ -129,6 +168,11 @@ class OcrWorker(QThread):
                 _logger.warning("table layout: 判别式行框不可用 %s: %s", item.name, e)
         if not lines:
             return "", disc_text
+        # 把补取到的坐标回写到 item：schema 抽取（尤其是明细表）也在等这份坐标，
+        # 不回写就等于同一页为了不同目的各跑一次 RapidOCR。
+        item.lines = lines
+        item.img_w = W
+        item.img_h = H
         try:
             return build_table_from_lines(lines, W, H), disc_text
         except Exception as e:

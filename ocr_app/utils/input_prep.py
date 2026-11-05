@@ -37,6 +37,11 @@ class InputItem:
         self.lines = None         # [{"text","x0","x1","y0","y1"}, ...]
         self.img_w = 0
         self.img_h = 0
+        # 凭证 schema（Phase 3.2）：命中时存结构化字段与 schema id，未命中为 None。
+        # 导出环节据此走「严格按 schema 排版」而不是把 OCR 文本原样吐出来；
+        # 未启用 schema（--schema none / GUI 选“不使用”）时这两个字段恒为 None。
+        self.schema = None
+        self.schema_id = None
 
 
 @dataclass
