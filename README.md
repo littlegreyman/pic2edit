@@ -11,12 +11,14 @@
   <img src="https://img.shields.io/badge/Engine-DeepSeek--OCR%20%2F%20llama.cpp-orange.svg" alt="Engine">
 </p>
 
-> **本地离线 OCR 桌面应用**：把图片 / PDF 转成可编辑文档（Markdown / Word / 纯文本）。
+> **本地离线 OCR 桌面应用**：把图片 / PDF 转成可编辑文档（Markdown / Word / 纯文本 / HTML / JSON），
+> 判别式 OCR 优先、VLM 仅作兜底，支持凭证 schema 与忠实版式还原。
 > 模型完全在**本机**加载与推理，**不联网、不上传**，隐私不出本机。
 
 **pic2edit (Picture to Editable Document)** is a local, offline OCR desktop app that turns
-images and PDFs into editable Markdown / Word / plain text using the
-[DeepSeek-OCR](https://github.com/deepseek-ai/DeepSeek-OCR) vision-language model.
+images and PDFs into editable Markdown / Word / plain text / HTML / JSON using
+[DeepSeek-OCR](https://github.com/deepseek-ai/DeepSeek-OCR) with a discriminative-first,
+zero-hallucination pipeline, plus drop-in document schemas.
 Everything runs on your machine — no cloud, no uploads.
 
 ---
@@ -24,14 +26,33 @@ Everything runs on your machine — no cloud, no uploads.
 ## ✨ 功能特性
 
 - **完全离线、隐私友好**：模型与引擎下载到本地后断网即可运行；转换过程无任何网络上传。
-- **丰富输入**：图片 `jpg / jpeg / tif / tiff / png / bmp / webp`；PDF 整页高 DPI 渲染做版面 OCR；多页 TIF 逐帧拆分。
-- **DeepSeek-OCR 视觉语言模型**：保留版式、表格与坐标感知输出（`<|grounding|>`）。
+- **判别式优先、零幻觉**：清晰印刷体先走 RapidOCR（纯 CPU、判别式，不会凭空生成文字）；
+  仅在判别式失败时才由 DeepSeek-OCR VLM 兜底，兜底结果还要过幻觉筛查。GUI 与 CLI
+  共用同一条 `ocr_pipeline`，不允许绕过流水线直接喂给生成式模型。
+- **丰富输入**：图片 `jpg / jpeg / tif / tiff / png / bmp / webp`；PDF 整页高 DPI 渲染做版面
+  OCR（不再抽取页内嵌图）；多页 TIF 逐帧拆分；目录 / 多文件批量转换。
+- **凭证 schema 三态**：`none` / `auto` / `<id>`。schema 是 drop-in 包
+  （内置 → `$PIC2EDIT_SCHEMA_DIR` → `~/.pic2edit/schemas`，同名覆盖），
+  **新增一种凭证 = 写一个目录，不改一行转换代码**；
+  `python -m schemas.cli` 提供 `list / validate / test / new / pack`。
+- **忠实版式导出**：命中 schema 走其版式；未命中时用「原图垫底 + 按 OCR 坐标叠透明
+  文字层」（可搜索 PDF 的做法），不再用 HTML 重排版面冒充原件；三档降级，
+  导出 HTML 与 GUI 预览统一过白名单清洗。
+- **schema 生成器**：`python -m schema_gen` 从国标 XSD 生成「数据格式齐全、
+  定位策略待补」的声明式骨架包。标准只描述数据模型、不含票面坐标与版式，
+  因此生成器**不假装产出可直接上线的抽取规则**（详见
+  [`ocr_app/docs/schema-technical-spec-v1.md`](ocr_app/docs/schema-technical-spec-v1.md)）。
+- **五种输出模式**：Markdown（默认） / 纯文本 OCR / 图表·公式 / 表格（键值→表） /
+  表格（HTML，合并单元格）；导出文件支持 `.md / .txt / .docx / .html / .json`。
 - **三后端可切换**：
   - **llama.cpp（默认、最轻量）**：官方预编译 `llama-server` + 量化 GGUF（Q4_K_M 约 2GB，最省显存，适配 8GB 显卡）。
   - **Ollama（可选）**：`ollama pull deepseek-ocr` 后用本机 Ollama 推理（需注意官方模型为 6.7GB F16）。
-  - **Transformers（可选）**：本地 HF 官方模型 + 4/8bit 量化，常驻显存，连续多页转换很快。
-- **PySide6 双栏 GUI**：左侧待转换列表 / 图像预览，右侧可编辑 Markdown（编辑 / 预览双模式），一键导出 `.md / .docx / .txt`。
-- **四种输出格式**：Markdown（默认） / 纯文本 OCR / 图表·公式 / 表格（键值→表）。
+  - **Transformers（可选）**：本地 HF 官方模型 + 4/8bit 量化，常驻显存，连续多页转换很快；
+    分辨率模式 Tiny / Small / Base / Large / Gundam **仅此后端消费**，经 `--mode` 下发。
+- **PySide6 双栏 GUI**：左侧待转换列表 / 图像预览，右侧可编辑 Markdown（编辑 / 预览双模式），
+  一键导出 `.md / .txt / .docx / .html / .json`。
+- **双前端共享内核**：GUI(Qt) 与 WorkBuddy skill(CLI) 都只经 `backend_api.py` 门面访问内核；
+  引擎诊断、逐页路由策略、提示词与采样参数由两处共用，避免能力漂移。
 - **针对密集页面退化做了参数调优**：贪心解码 + 长程重复惩罚，稳定不崩、不截断（详见[关键技术要点](#关键技术要点)）。
 - **跨平台**：Windows / Linux / macOS（启动与下载脚本均提供 `.bat` 与 `.sh`；一键启动 GUI：Windows 双击 `launch_gui.bat`、Linux / macOS `./launch_gui.sh`，均直接调用项目自带 venv 解释器，无需系统 PATH 上有 Python）。
 
@@ -39,34 +60,61 @@ Everything runs on your machine — no cloud, no uploads.
 
 ## 📂 目录结构
 
+> 以下按 `git ls-files` 逐条对账；`test_*.py` 表示 319 项测试，未逐一列出。
+
 ```
 pic2edit/
-├── LICENSE                 # MIT 许可证
-├── VERSION                 # 版本说明
+├── LICENSE                     # MIT 许可证
+├── VERSION                     # 版本说明 + 唯一变更记录入口
+├── THIRD_PARTY_NOTICES         # 第三方许可证与署名索引（合规分发）
+├── README.md                   # 项目总览（本文件）
+├── INSTALL.zh-CN.md            # 面向普通用户的安装指南
 ├── .gitignore
-├── launch_gui.py           # 跨平台一键启动 GUI（自动定位 ocr_app 与 venv）
-├── launch_gui.bat          # Windows 一键启动 GUI（双击即用，直接调用 venv 解释器）
-├── launch_gui.sh           # Linux/macOS 一键启动 GUI（直接调用 venv 解释器）
-└── ocr_app/                # 应用主体
-    ├── main.py             # 入口
-    ├── gui.py              # PySide6 双栏主界面 + 输出格式下拉 + 运行状态面板
-    ├── config.py           # 配置（后端/模型/分辨率/提示词），持久化到 ~/.pic2edit
-    ├── worker.py           # 后台 OCR 线程
-    ├── requirements.txt    # 主程序依赖
-    ├── requirements_tf.txt # Transformers 后端专用依赖
-    ├── download_models.py  # ★ 下载 llama-server 引擎 + DeepSeek-OCR GGUF/mmproj（跨平台逻辑）
-    ├── run_llamacpp_server.py   # 自动定位 exe/模型/mmproj 并启动服务
-    ├── run_transformers_server.py
-    ├── verify_backend.py   # ★ 端到端验证：严格契约 mock + --live 直连真机
-    ├── _smoke_test.py      # 无界面冒烟测试
-    ├── test_text_utils.py / test_table_utils.py
-    ├── backends/           # Ollama / llama.cpp / Transformers 后端实现
-    ├── utils/              # 输入预处理 / docx 导出 / 日志
-    └── docs/
-        └── llamacpp_deepseek_ocr_api.md  # llama.cpp + DeepSeek-OCR 请求/返回契约（权威文档）
+├── ruff.toml                   # 静态检查规则（ruff 钉 0.17.4）
+├── build_logos.py              # logo 资源生成
+├── pic2edit-logo.png           # 图标资源（另有 horizontal / transparent / ico 变体）
+├── launch_gui.py               # 跨平台一键启动 GUI（自动定位 ocr_app 与 venv）
+├── launch_gui.bat / launch_gui.sh    # Windows / Linux·macOS 薄壳
+├── packaging/                  # PyInstaller 冻结 + Inno Setup 安装包
+│   ├── build_exe.py
+│   ├── pic2edit.spec           # 冻结清单（含 RapidOCR 数据收集）
+│   └── pic2edit.iss            # 安装包脚本（版本号在此）
+├── .github/workflows/ci.yml    # 云端 CI：全量 pytest + ruff
+├── .workbuddy/skills/pic2edit-ocr/   # WorkBuddy skill（CLI 前端）
+│   ├── SKILL.md
+│   ├── scripts/pic2edit_convert.py
+│   └── references/api_contract.md
+└── ocr_app/                    # 应用主体
+    ├── README.md               # 技术细节深读
+    ├── backend_api.py          # ★ GUI / skill 唯一门面
+    ├── document_controller.py  # 文档分组 + 扁平页序 + 选择规约（零 Qt）
+    ├── engine_launcher.py      # 引擎进程组回收（关停必走 stop）
+    ├── gui.py / main.py / worker.py / config.py / about.py
+    ├── conftest.py / pytest.ini    # offscreen 夹具 + 测试配置
+    ├── test_version_consistency.py # 版本位 / CI 依赖 / 目录树对账门禁
+    ├── requirements.txt / requirements.lock / requirements-dev.txt
+    │   requirements_tf.txt / requirements_freeze.txt
+    ├── setup_venv.bat / download_models.bat / download_models_tf.bat
+    ├── run_llamacpp_server.py / run_transformers_server.py
+    ├── verify_backend.py / _smoke_test.py
+    ├── backends/               # 三后端 + 判别式 / 路由 / 流水线 / 引擎诊断（13 模块）
+    │   └── routing.py / ocr_pipeline.py / engine_boot.py
+    ├── schemas/                # ★ 凭证 schema 子系统（drop-in 包 + runtime/lint/cli）
+    │   ├── asset_card/         #   声明式参考实现（manifest.json + schema.yaml + layout.html）
+    │   ├── invoice/            #   插件式（extract.py / render.py / html_layout.py）
+    │   └── runtime.py / lint.py / cli.py / registry.py
+    ├── schema_gen/             # ★ 国标 XSD → schema 骨架包生成器
+    │   ├── README.md
+    │   └── sources.py / readers.py / ir.py / emit.py / verify.py / cli.py
+    ├── utils/                  # 输入预处理 / 导出 / 忠实版式 / HTML 清洗（16 模块）
+    │   └── input_prep.py / export_formats.py / faithful_html.py / html_safety.py
+    └── docs/                   # 规格、审查报告、验证矩阵、原件台账（8 份）
+        └── schema-technical-spec-v1.md
 ```
 
-> 更完整的目录说明、后端细节与排错见 [`ocr_app/README.md`](ocr_app/README.md)。
+> 更完整的目录说明、后端细节与排错见 [`ocr_app/README.md`](ocr_app/README.md)；
+> schema 包契约见 [`ocr_app/docs/schema-technical-spec-v1.md`](ocr_app/docs/schema-technical-spec-v1.md)，
+> 生成器用法见 [`ocr_app/schema_gen/README.md`](ocr_app/schema_gen/README.md)。
 
 ---
 
@@ -203,21 +251,37 @@ DeepSeek-OCR 在 llama.cpp 上的**原生模板会自动注入 media marker** �
 
 ## 🧪 开发与测试
 
-仓库内置三层验证（无需 GPU 即可跑大部分）：
+在 `ocr_app/` 下用项目自带 venv 执行（Windows 把 `./.venv/bin/python` 换成
+`.venv\Scripts\python.exe`）：
 
-```bat
-:: 1) 无界面冒烟测试（PDF/TIF/导出/三后端/启动器）
-.venv\Scripts\python.exe _smoke_test.py
+```bash
+# 1) 全量回归（319 项；无 GPU 也能跑完，conftest 预设 offscreen 且限制 OpenCV 线程）
+./.venv/bin/python -m pytest -q
 
-:: 2) 后端契约自检（严格 mock llama-server，无需模型）
-.venv\Scripts\python.exe verify_backend.py
+# 2) 静态检查（ruff 钉 0.17.4，避免新规则无端变红）
+./.venv/bin/python -m ruff check .
 
-:: 3) 单元：客户端文本后处理
-.venv\Scripts\python.exe test_text_utils.py
-.venv\Scripts\python.exe test_table_utils.py
+# 3) 无界面冒烟测试（PDF/TIF/导出/三后端/启动器）
+./.venv/bin/python _smoke_test.py
+
+# 4) 后端契约自检（严格 mock llama-server，无需模型）
+./.venv/bin/python verify_backend.py
+
+# 5) 真机直连：需本机有模型 + GPU，打印模型输出的真实 OCR 文本
+./.venv/bin/python verify_backend.py --live http://localhost:8080
 ```
 
-- `verify_backend.py --live http://localhost:8080`：直连真机打印模型输出的真实 OCR 文本。
+schema 子系统与生成器（详见各模块 README）：
+
+```bash
+./.venv/bin/python -m schemas.cli list          # 也可 validate / test / new / pack
+./.venv/bin/python -m schema_gen --id ppe_card --version 1.0.0
+```
+
+- **真实 OCR 质量**只能靠第 5 步（或 GUI 真机转换）人工比对原图：沙箱
+  `ulimit -v 4GB` + 拦 CUDA，自动化测试验证的是产物契约，不代表识别质量。
+- 一致性与规格由静态对账测试钉住：`test_version_consistency.py`（版本位 / CI 依赖 /
+  README 目录树）、`test_schema_spec.py`（规格常量 ↔ 源码）。
 - 真实样例图片可通过环境变量 `PIC2EDIT_CLINIC` 指定（缺省时自动合成 PNG 跑契约测试，开箱即用）。
 - 更深层的调用契约见 [`ocr_app/docs/llamacpp_deepseek_ocr_api.md`](ocr_app/docs/llamacpp_deepseek_ocr_api.md)。
 
@@ -236,7 +300,10 @@ DeepSeek-OCR 在 llama.cpp 上的**原生模板会自动注入 media marker** �
 
 本项目（pic2edit 自身源码）以 **MIT License** 发布，见 [LICENSE](LICENSE)。
 
-本项目**不打包、不内置**任何模型权重或第三方二进制：DeepSeek-OCR 模型与 llama.cpp 引擎均在**运行时**从官方来源下载到本地。上游组件的许可证与署名细节见 [`ocr_app/README.md`](ocr_app/README.md) 的“许可证与第三方署名”一节。
+本项目有两种分发形态：**源码运行**与 **PyInstaller 冻结 + Inno Setup 安装包**（见 `packaging/`）。
+DeepSeek-OCR 模型权重与 llama.cpp 引擎**不随仓库分发**，均在首次运行时从官方来源下载到本地；
+安装包会内置 PySide6 动态链接库（LGPL-3.0）等第三方二进制，其许可证、署名与
+「可替换/可获取源码」要求统一见 [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES)。更细的上游组件说明见 [`ocr_app/README.md`](ocr_app/README.md) 的“许可证与第三方署名”一节。
 
 > ℹ️ **许可证说明**：GUI 框架已采用 **PySide6（LGPL-3.0，Qt 官方绑定）**，可闭源/商业分发（动态链接 Qt）。结合默认判别式 OCR 路径（pypdfium2 + RapidOCR 系列，均为 MIT/Apache-2.0/BSD），**本项目整体可按 MIT License 分发，含打包后的 GUI 二进制**。
 

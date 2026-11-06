@@ -1,6 +1,6 @@
 # pic2edit 安装指南
 
-> 本地离线 OCR 桌面应用 · 把图片 / PDF 转成可编辑文档（Markdown / Word / 纯文本）
+> 本地离线 OCR 桌面应用 · 把图片 / PDF 转成可编辑文档（Markdown / Word / 纯文本 / HTML / JSON）
 > 当前版本：**alpha 0.20**（与安装包版本号一致）
 > 许可证：**MIT**（详见文末「许可证与发行说明」）
 
@@ -30,11 +30,18 @@
 [DeepSeek-OCR](https://github.com/deepseek-ai/DeepSeek-OCR) 视觉语言模型 +
 [llama.cpp](https://github.com/ggml-org/llama.cpp) 推理引擎。它能把
 `jpg / jpeg / tif / tiff / png / bmp / webp` 图片和 PDF 转成可编辑的
-**Markdown / Word(.docx) / 纯文本**，并保留版式、表格与坐标信息。
+**Markdown / Word(.docx) / 纯文本 / HTML / JSON**，并保留版式、表格与坐标信息。
 
 - **完全离线**：模型与引擎下载到本地后断网即可运行，转换过程**无任何网络上传**。
 - **隐私友好**：文档与图片不出本机。
+- **判别式优先、零幻觉**：清晰印刷体先由 RapidOCR（纯 CPU）识别，失败才由 VLM 兜底，
+  从根上避免生成式模型凭空编造文字。
+- **凭证 schema 三态**：`none / auto / <id>`，票种以 drop-in 包形式扩展，不改转换代码；
+  未命中 schema 时用「原图垫底 + 坐标文字层」忠实还原版面。
+- **五种输出模式 / 五种导出格式**：Markdown、纯文本、图表·公式、键值→表、HTML 合并单元格表；
+  导出 `.md / .txt / .docx / .html / .json`。
 - **三后端可切换**：llama.cpp（默认、最轻量）、Ollama（可选）、Transformers（可选）。
+- **目录 / 多文件批量**：一次导入整目录或多张图片逐页转换；坏文件给出可读错误并跳过。
 
 ---
 
@@ -174,13 +181,20 @@ download_models.bat   # Windows
 4. 尝试「导出」为 `.md` / `.docx` / `.txt`，确认文件可正常打开。
 
 **命令行方式（开发者 / 无显卡也可跑大部分）：**
+
 ```bash
 cd ocr_app
-.venv\Scripts\python.exe _smoke_test.py     # 无界面冒烟测试（PDF/TIF/导出/三后端）
-.venv\Scripts\python.exe verify_backend.py   # 后端契约自检（严格 mock，无需模型）
-# 真机直连：先启动引擎，再执行
-.venv\Scripts\python.exe verify_backend.py --live http://localhost:8080
+# Windows 把 ./.venv/bin/python 换成 .venv\Scripts\python.exe
+./.venv/bin/python -m pytest -q          # 全量回归 319 项（两次独立 EXIT=0）
+./.venv/bin/python -m ruff check .       # 静态检查（ruff 钉 0.17.4）
+./.venv/bin/python _smoke_test.py        # 无界面冒烟（PDF/TIF/导出/三后端）
+./.venv/bin/python verify_backend.py     # 后端契约自检（严格 mock，无需模型）
+# 真机直连：先启动引擎，再执行（打印真实 OCR 文本）
+./.venv/bin/python verify_backend.py --live http://localhost:8080
 ```
+
+> **自动化测试不等于识别质量**：`pytest` 里没有真实 GPU 推理，验证的是产物契约；
+> 真机请务必跑一次 `--live` 或 GUI 转换，逐字核对原图。
 
 ---
 

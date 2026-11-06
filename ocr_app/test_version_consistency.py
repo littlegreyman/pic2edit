@@ -111,7 +111,7 @@ def _tree_block(rel: str, marker: str) -> str:
     [("README.md", "## 📂 目录结构"), ("ocr_app/README.md", "## 目录结构")],
 )
 def test_readme_tree_lists_only_real_files(rel, marker):
-    """防「写了不存在的路径」；防不了「漏写真实文件」，那部分靠人工按 git ls-files 对账。"""
+    """防「写了不存在的路径」，与下面的「防漏写」成对。"""
     tracked = _tracked_names()
     names = {
         m.group(0)
@@ -121,3 +121,44 @@ def test_readme_tree_lists_only_real_files(rel, marker):
     assert names, f"{rel} 目录树里没解析出任何文件名（解析规则失效？）"
     missing = sorted(n for n in names if n not in tracked)
     assert not missing, f"{rel} 目录树写了不存在的路径: {missing}"
+
+
+REQUIRED_TREE_ENTRIES = (
+    "backend_api.py",
+    "document_controller.py",
+    "engine_launcher.py",
+    "schemas/",
+    "schema_gen/",
+    "packaging/",
+    ".github/",
+    "INSTALL.zh-CN.md",
+    "THIRD_PARTY_NOTICES",
+    "requirements.lock",
+    "test_version_consistency.py",
+)
+
+
+def test_readme_tree_mentions_key_subsystems():
+    """防「漏写真实文件」：0.20 的关键子系统必须在首页目录树里可见。"""
+    block = _tree_block("README.md", "## 📂 目录结构")
+    missing = [x for x in REQUIRED_TREE_ENTRIES if x not in block]
+    assert not missing, f"README.md 目录树漏了关键路径: {missing}"
+
+
+def test_third_party_notices_tracks_requirements():
+    """Check List ⑤：合规署名必须与 requirements.txt 逐项对账，不能停在旧依赖。"""
+    req = _text("ocr_app/requirements.txt")
+    notice = _text("THIRD_PARTY_NOTICES")
+    deps = []
+    for line in req.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = re.match(r"^([A-Za-z0-9_.\-]+)\s*[><=]", line)
+        if match:
+            deps.append(match.group(1))
+    assert len(deps) >= 10, f"requirements.txt 解析异常: {deps}"
+    missing = [d for d in deps if d.lower() not in notice.lower()]
+    assert not missing, f"THIRD_PARTY_NOTICES 缺依赖署名: {missing}"
+    assert "rapidocr_onnxruntime" not in notice, "合规文件仍写已废弃包名"
+    assert ".venv_ocr" not in notice, "合规文件仍写已弃用的子环境"

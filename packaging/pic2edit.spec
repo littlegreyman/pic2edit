@@ -27,15 +27,15 @@ except NameError:
 PROJECT_ROOT = os.path.abspath(os.path.join(SPECPATH_DIR, ".."))
 OCR_APP = os.path.join(PROJECT_ROOT, "ocr_app")
 
-# 收集 onnxruntime / rapidocr_onnxruntime 的全部二进制与数据（含 DLL / 模型占位）
+# 收集 onnxruntime / rapidocr 的全部二进制与数据（含 DLL / 模型占位）
 ocr_binaries, ocr_datas, ocr_hiddenimports = [], [], []
-for pkg in ("onnxruntime", "rapidocr_onnxruntime"):
+for pkg in ("onnxruntime", "rapidocr"):
     try:
         b, d, h = collect_all(pkg)
         ocr_binaries += b
         ocr_datas += d
         ocr_hiddenimports += h
-    except Exception as e:  # 未安装则不收集（冻结态会优雅降级到 VLM 兜底）
+    except Exception as e:  # 未安装则不收集（冻结态会缺判别式 OCR、退化为 VLM 兜底；真机须验证）
         print("[warn] collect_all(%s) failed: %s" % (pkg, e))
 
 added_datas = [
@@ -75,7 +75,7 @@ a = Analysis(
         "utils.app_home",
         "download_models",
         "run_llamacpp_server",
-        "rapidocr_onnxruntime",
+        "rapidocr",
         "onnxruntime",
         "onnxruntime.capi",
         "markdown",

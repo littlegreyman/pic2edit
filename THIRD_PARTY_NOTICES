@@ -11,32 +11,37 @@ pic2edit 自身源码以 MIT License 发布（见根目录 LICENSE）。
   署名与「可替换/可获取源码」要求。
 
 依 Apache-2.0 等许可证要求，此处集中保留其许可证与版权声明索引，便于合规分发与署名。
+版本下限以 `ocr_app/requirements.txt` 为准（该文件为每个下限标注了对应的 CVE）；
+`ocr_app/requirements.lock` 钉死开发态 / CI 的确切版本，`ocr_app/requirements_freeze.txt`
+是 PyInstaller 打包态（Python ≤3.12）的冻结清单。
 
 主程序依赖（ocr_app/requirements.txt）
 --------------------------------------
-- PySide6 (>=6.6)         — LGPL-3.0 / 商业许可（The Qt Company，Qt 官方 Python 绑定）
-                            PySide6 为 LGPL-3.0，可闭源/商业分发 GUI（动态链接 Qt）；
-                            本项目 GUI 已采用 PySide6，故整体可保持 MIT 兼容分发。
-- pypdfium2 (>=4.0)        — Apache-2.0（PDF 渲染后端，基于 PDFium）
-- Pillow (>=10.0)          — MIT-CMU / HPND
-- requests (>=2.31)        — Apache-2.0
-- markdown (>=3.5)         — BSD-3-Clause
-- python-docx (>=1.1)      — MIT
-- huggingface_hub (>=0.23) — Apache-2.0
-- numpy                    — BSD-3-Clause（传递依赖）
+- PySide6 (>=6.12,<6.13)       — LGPL-3.0 / 商业许可（The Qt Company，Qt 官方 Python 绑定）
+                                 动态链接 Qt，可闭源/商业分发；整体保持 MIT 兼容。
+                                 注：6.12.0 命中 CVE-2026-105924（Qt CBOR→JSON 空指针），
+                                 本项目不解析 CBOR/QDom/SVG，路径不命中；官方修复版 6.12.1
+                                 尚未发布，发布后抬下限。
+- pypdfium2 (>=5.14.0,<6)      — Apache-2.0（PDF 整页渲染，基于 PDFium）
+                                 注：内置 PDFium chromium/8076 仍带 CVE-2026-110155
+                                 （AGG 光栅化堆溢出），上游暂无修复版本；缓解靠
+                                 input_prep 的子进程隔离 + README 风险声明。
+- Pillow (>=13.0.0,<14)        — MIT-CMU / HPND
+- requests (>=2.34.2)          — Apache-2.0（全部调用点均带 timeout）
+- markdown (>=3.11.0)          — BSD-3-Clause
+- python-docx (>=1.2.0)        — MIT
+- PyYAML (>=6.0.3)             — MIT（声明式 schema 的唯一新增依赖；只用 safe_load）
+- huggingface_hub (>=0.23)     — Apache-2.0（仅下载模型时使用）
+- rapidocr (>=3.10.0)          — Apache-2.0（判别式 OCR，随主 venv 安装，
+                                 **不再需要独立的 OCR 子环境**）
+- onnxruntime (>=1.31)         — MIT（RapidOCR 的 CPU 推理运行时）
 
-OCR 引擎依赖（.venv_ocr，默认判别式后端）
-----------------------------------------
-- rapidocr_onnxruntime (1.2.x) — Apache-2.0（含 RapidOCR 模型与 ONNX 运行时封装）
-- onnxruntime                  — MIT
-- opencv-python / opencv-python-headless — Apache-2.0
-- pyclipper                    — MIT
-- shapely                      — BSD-3-Clause
-- PyYAML                       — MIT
-- protobuf                     — BSD-3-Clause
-- flatbuffers                  — Apache-2.0
-- packaging                    — BSD-2-Clause / Apache-2.0 / MIT
-- six                          — MIT
+传递依赖（完整清单见 ocr_app/requirements.lock；各包许可证随其 wheel 内的 LICENSE 提供）
+--------------------------------------------------------------------------------------
+- numpy / shapely / protobuf            — BSD-3-Clause
+- opencv-python-headless / flatbuffers  — Apache-2.0
+- pyclipper / six                       — MIT
+- packaging                             — BSD-2-Clause / Apache-2.0 / MIT
 
 Transformers 后端依赖（ocr_app/requirements_tf.txt，独立 Python 3.11 环境）
 ---------------------------------------------------------------------------
@@ -51,6 +56,7 @@ Transformers 后端依赖（ocr_app/requirements_tf.txt，独立 Python 3.11 环
 ------------------------------------------------
 - DeepSeek-OCR 模型与官方推理代码 — 遵循 deepseek-ai 官方许可证
 - llama.cpp (llama-server 预编译二进制) — MIT
+  注：b11853 落在多个 GGUF RCE CVE 区间（如 CVE-2025-49847），升级需评估。
 
 许可兼容性说明
 --------------
