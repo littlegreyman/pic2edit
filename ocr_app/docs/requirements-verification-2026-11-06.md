@@ -28,7 +28,7 @@
 | 9 | skill 支持目录输入 | ✅ | 实测：目录（含子目录、1 个坏文件、1 个 .txt）→ 2 个产物落在 `--out`，坏文件报 `[error]` 后继续，退出码 1；`test_expand_inputs_walks_directory` 等 3 项 + `test_multi_input_requires_out_directory` |
 | 10 | `cli pack` | ✅ | 实测：`python -m schemas.cli pack asset_card` → 5 文件、顶层 `asset_card/`、打印的 sha256 与 `sha256sum` 一致；`test_pack_via_id_not_path`、`test_new_then_pack_roundtrip`、`test_pack_refuses_broken_package` |
 | 11 | 输入分诊（PDF 文本层 / 内嵌 XML） | ❌ | 未做。属 Phase 5「输入分诊」，需单独立项（报告 §6.2–6.3） |
-| 12 | 国标 schema 生成器（342 字段） | ❌ | 未做。报告 §6.1，需单独立项 |
+| 12 | 国标 schema 生成器（342 字段） | ✅ | **当日 `e550389` 之后 P1–P3 补做**：规范 `docs/schema-technical-spec-v1.md` v1.1（§6 输出契约、§9.1 真跑记录）+ 计划 `docs/schema-gen-plan.md`；实现 `schema_gen/`（sources / readers / ir / emit / verify / cli），测试 `test_schema_gen_input.py`(24) + `test_schema_gen.py`(18) + `test_schema_spec.py` 静态对账。**真跑**：官网 XSD 78,266 B / sha256 `d39b7378…6689b7` → 9 实体 / 342 字段 / 16 段；覆盖安装 `list` 显示 `ppe_card v2.0.0 user`；pack sha256 与 `sha256sum` 一致；`--schema ppe_card --format json --cache` 页内 `schema_version=2.0.0`；none 对照 `raw_text` 逐字节相同；auto 无关样张不误命中；缓存两遍 html 逐字节一致且「原图垫底×1」；28 项断言全过。PDF↔XSD 交叉对账 9/9 实体、120/120 唯一字段名、归一化空白后 101/101 中文标签（台账 §7）。**边界**：定位策略仍全部 `pending`，OCR 质量未验证（沙箱 GPU 受限） |
 
 ---
 
@@ -79,5 +79,7 @@
 - `pypdfium2` 内置 PDFium 的 AGG 堆溢出（CVE-2026-110155）上游无修复版本；当前缓解是
   "不信任输入尺寸 + 单进程渲染"，彻底方案（渲染进程隔离）未做。
 - llama.cpp b11853 落在多个 GGUF RCE CVE 区间（如 CVE-2025-49847），升级需评估。
-- 路线图 11/12（输入分诊、国标 schema 生成器）未立项。
+- 路线图 11（输入分诊）仍未立项；路线图 12 已落地但**只到骨架**：定位策略全部
+  `locator: pending`，真实票面不会命中，不能当可直接上线的抽取规则；
+  OCR 质量需用户原生桌面验证。
 - 真实 GPU OCR 质量验证需在用户原生桌面进行（本沙箱 seccomp 拦 CUDA ioctl）。

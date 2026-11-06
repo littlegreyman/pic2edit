@@ -9,6 +9,15 @@
 
 一句话：**新增一种凭证 = 写一个目录，不改一行转换代码。**
 
+> **从标准原件起骨架（v1.1 新增第三个入口）**：`python -m schema_gen`，用法见
+> [`../schema_gen/README.md`](../schema_gen/README.md)。它从官方 XSD 产出声明式包骨架，
+> 但**只产数据格式、不产定位策略与版式**：字段全部 `locator: pending`、
+> `strict: false`、保守 `detect`（标准号）、`priority: 900`、不生成 `layout.html`。
+> 产物默认落 `ocr_app/generated/<id>/`，**不自动安装**，也 MUST NOT 放进本目录
+> （`schemas/` 是注册表扫描根）。补齐别名 / 锚点 / 边界并换成真实票面样张之前，
+> 不要把它当可直接上线的抽取规则；`schemas.cli test` 的命中率在此阶段不构成
+> 抽取效果证据（骨架包实测 `hit_rate=0.0`）。
+
 ```
 schemas/<id>/
   manifest.json     # 元信息（纯数据）：id / title / version / priority / layout

@@ -110,9 +110,10 @@ _SAMPLE_README = """# 样张说明（生成器产出）
 所有字段标为 `locator: pending`，`strict: false`，`detect` 用标准号作保守关键词。
 
 因此 `schemas.cli test` 的 `hit_rate` 在这个阶段**不构成抽取效果证据**
-（`bool(doc)` 恒真），`schema_gen verify` 会把它单独列为「效果未验证」。
-补齐票面别名、锚点与 `start/stop` 边界、并换成真实票面样张之后，
-才启用 `hit_rate >= 0.8` 门禁。
+（零字段时 `extract()` 返回 `None`，骨架包实测 `hit_rate=0.0`；补齐部分策略后
+又可能是「字段几乎全空」的 1.0），`schema_gen verify` 会把它单独列为
+「效果未验证」。补齐票面别名、锚点与 `start/stop` 边界、并换成真实票面
+样张之后，才启用 `hit_rate >= 0.8` 门禁。
 """
 
 

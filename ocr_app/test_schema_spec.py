@@ -327,8 +327,45 @@ def test_spec_section6_generator_contract_matches_source():
     with open(SPEC, encoding="utf-8") as f:
         text = f.read()
     for marker in ("python -m schema_gen", "priority: 900", "locator_pending: N",
-                   "--frozen-time", "结构自检", "抽取效果自检"):
-        assert marker in text, f"规格缺 §6 条款: {marker}"
+                   "--frozen-time", "结构自检", "抽取效果自检",
+                   "第 8 步的样张口径", "9.1 P3 生成器真跑记录",
+                   "16 段全为 table", "hit_rate=0.0"):
+        assert marker in text, f"规格缺 §6/§9.1 条款: {marker}"
+
+
+def test_generator_docs_are_discoverable():
+    """P3 交付：生成器入口 MUST 能从 schemas/README.md 找到，且自带使用说明。"""
+    with open(os.path.join(HERE, "schemas", "README.md"), encoding="utf-8") as f:
+        assert "python -m schema_gen" in f.read(), "消费侧 README 缺生成器入口"
+    readme = os.path.join(HERE, "schema_gen", "README.md")
+    assert os.path.isfile(readme), "生成器使用说明缺失"
+    with open(readme, encoding="utf-8") as f:
+        t = f.read()
+    for marker in ("--offline", "--frozen-time", "结构自检", "抽取效果自检",
+                   "覆盖安装", "locator: pending", "OCR 识别质量未验证"):
+        assert marker in t, f"生成器使用说明缺 {marker}"
+
+
+def test_spec_v11_effect_reason_matches_runtime_source():
+    """§6.6 的理由 MUST 与 runtime.extract 一致：零字段返回 None → 实测 0.0。
+
+    P3 真跑发现 v1.1 初稿写的「strict:false 下 hit_rate 恒 1.0」与代码不符：
+    extract() 在一个字段都没抽到时直接返回 None，骨架样张上 hit_rate=0.0。
+    规格、生成器说明、源码三方对账，防止「文档写了、代码没有」再次发生。
+    """
+    with open(SPEC, encoding="utf-8") as f:
+        text = f.read()
+    assert "hit_rate=0.0" in text, "规格 MUST 按 P3 实测写明 hit_rate=0.0"
+    assert "v1.1 初稿" in text, "规格 MUST 登记这处纠偏，而不是悄悄改掉"
+    assert "恒为 1.0" not in text, "旧的错误结论句不得保留"
+    with open(os.path.join(HERE, "schemas", "runtime.py"), encoding="utf-8") as f:
+        runtime_src = f.read()
+    assert "if not flat and not any(tables.values()):" in runtime_src, \
+        "runtime.extract 的零字段返回 None 语义变了，规格理由需同步复核"
+    for name in ("emit.py", "verify.py"):
+        with open(os.path.join(HERE, "schema_gen", name), encoding="utf-8") as f:
+            assert "`bool(doc)` 恒真" not in f.read(), \
+                f"{name} 仍写着与 runtime 不符的「恒真」理由"
 
 
 def test_spec_d2_metadata_drift_warns_only_when_declared(tmp_path):

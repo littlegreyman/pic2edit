@@ -3,8 +3,10 @@
 
 第一层结构自检是门禁：lint / 装载 / 样张存在 / 三套渲染 / 字段数对账 /
 逐字节确定性。第二层抽取效果自检在 ``locator_pending > 0`` 时**只报告**：
-``check_samples`` 的 ``hit`` 判据是 ``bool(doc)``，生成包 ``strict:false`` 时恒真，
-hit_rate 恒 1.0 ——把它当门禁等于让生成器自己给自己发合格证。
+``check_samples`` 的 ``hit`` 判据是 ``bool(doc)``，而 ``runtime.extract()`` 在
+零字段时返回 ``None`` ——生成包 P3 实测 ``hit_rate=0.0``；补齐部分定位策略后
+又可能返回一个字段几乎全空的 doc 使 ``hit_rate=1.0``。两端都不是效果证据，
+把它当门禁等于让生成器自己给自己发合格证。
 
 另有一条独立门禁：auto 模式与强制指定两种路径下，无关样张都 MUST NOT 命中
 生成包（§6.4 漏洞 A）。走真实注册表 ``apply_schemas``，不直接调 detect()。
