@@ -235,3 +235,74 @@ def test_spec_document_covers_all_four_parts_and_gap_list():
                    "# 第三部分 · 转换适用参数", "# 第四部分 · 生成流程输出契约",
                    "## 7. 规格与实现的差距清单", "## 2. 调用情形矩阵"):
         assert marker in text, f"规格缺章节: {marker}"
+
+
+def test_spec_v11_closes_generator_contract_gaps():
+    """v1.1 的两处漏洞必须写进规格：保守 detect、两层自检；数字不得硬编码。"""
+    with open(SPEC, encoding="utf-8") as f:
+        text = f.read()
+    assert "v1.1" in text.splitlines()[0]
+    # 漏洞 A
+    assert "priority: 900" in text
+    assert "保守 `detect`" in text
+    assert "auto 模式不得误命中" in text
+    # 漏洞 B
+    assert "结构自检" in text and "抽取效果自检" in text
+    assert "locator_pending: N" in text
+    assert "hit_rate" in text and "只打印、不判通过" in text
+    # 实测口径：361 = 10 顶层 + 9 ref + 342 字段；两者不矛盾，规格必须写清
+    assert "361" in text and "297" in text and "342" in text
+    assert "字段元素数" in text and "不得硬编码" in text
+    # 生成器入口与两条 lint
+    assert "python -m schema_gen" in text
+    assert "D1·v1.1 补" in text and "D2·v1.1 补" in text
+
+
+# ---------------------------------------------------------------- D1 / D2 lint
+def _lint_fixture(tmp_path, sid, sections_yaml, manifest=None, extra_top=""):
+    """构造一个最小合法声明式包，返回 lint_package() 结果。"""
+    pkg = tmp_path / sid
+    pkg.mkdir()
+    mf = {"id": sid, "title": "测试", "version": "1.0.0", "priority": 50,
+          "schema": "schema.yaml"}
+    if manifest:
+        mf.update(manifest)
+    (pkg / "manifest.json").write_text(
+        json.dumps(mf, ensure_ascii=False), encoding="utf-8")
+    (pkg / "schema.yaml").write_text(
+        f"id: {sid}\ntitle: 测试\nversion: 1.0.0\n{extra_top}"
+        "detect:\n  any: [测试]\nsections:\n" + sections_yaml, encoding="utf-8")
+    return lint.lint_package(str(pkg))
+
+
+_KV_SECTION = "  - key: h\n    mode: text\n    regex: '甲(.+)'\n"
+_TABLE_NO_START = ("  - key: items\n    label: 明细\n    mode: table\n"
+                   "    columns:\n      - {key: name, label: 名称}\n")
+_TABLE_WITH_START = ("  - key: items\n    label: 明细\n    mode: table\n"
+                     "    start: 明细\n"
+                     "    columns:\n      - {key: name, label: 名称}\n")
+
+
+def test_spec_d1_table_without_start_warns_but_does_not_block(tmp_path):
+    """D1：缺 start 的运行语义是安全的，但此前无任何提示；补 warning 不阻断存量包。"""
+    res = _lint_fixture(tmp_path, "d1_demo", _TABLE_NO_START)
+    assert res["ok"] is True, "warning MUST NOT 阻断 validate/pack"
+    assert any(i["level"] == "warning" and "缺 start" in i["message"]
+               for i in res["issues"])
+    res2 = _lint_fixture(tmp_path, "d1_ok", _TABLE_WITH_START)
+    assert not any("缺 start" in i["message"] for i in res2["issues"])
+
+
+def test_spec_d2_metadata_drift_warns_only_when_declared(tmp_path):
+    """D2：只对 yaml 里显式声明且与 manifest 冲突的键告警；不写就是交给 manifest。"""
+    res = _lint_fixture(tmp_path, "d2_drift", _KV_SECTION,
+                        manifest={"version": "9.9.9", "title": "另一个标题",
+                                  "priority": 7},
+                        extra_top="priority: 99\n")
+    assert res["ok"] is True
+    msgs = [i["message"] for i in res["issues"] if i["level"] == "warning"]
+    for k in ("version", "title", "priority"):
+        assert any(k in m and "manifest" in m for m in msgs), f"未对 {k} 漂移告警"
+    # 一致时不报；yaml 未声明 priority 时也不报
+    clean = _lint_fixture(tmp_path, "d2_clean", _KV_SECTION)
+    assert not any("不一致" in i["message"] for i in clean["issues"])

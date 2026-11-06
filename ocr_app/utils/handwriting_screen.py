@@ -126,6 +126,14 @@ try:
 except Exception:  # 环境缺 cv2 → 保守按印刷
     cv2 = None
 
+if cv2 is not None:
+    # OpenCV 5 默认按 CPU 核数拉并行线程池。这里是 **Qt GUI 里逐页调用**的手写
+    # 预筛，线程池既没意义又会和 Qt 抢地址空间：在 ulimit -v 4GB 的环境实测会
+    # 刷 "Can't spawn new thread: res = 11"，随后 PySide6 的 QtWidgets.abi3.so
+    # 连 mmap 都失败（QApplication([]) 直接挂起，全量测试卡住不动）。
+    # 单页小图的形态学/连通域运算单线程足够，显式钉死，不依赖 OpenCV 版本与核数。
+    cv2.setNumThreads(1)
+
 
 # ---- 判定阈值（标定集见模块 docstring）----
 _T_SELF = float(os.environ.get("PIC2EDIT_HW_SELF_T", "0.20"))

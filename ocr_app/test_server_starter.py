@@ -76,13 +76,17 @@ def test_free_vram_mib_parses():
 
 
 def test_estimate_vram_mib():
+    # 用 truncate 造稀疏文件，不要 ``f.write(b"0" * 1GiB)``：后者会一次性申请
+    # 1 GiB 连续内存，在本项目 4GB 虚拟内存上限、且前面已加载 cv2/PySide6/
+    # PDFium 的全量套件里直接 MemoryError（单独跑却通过，极易误判为偶发）。
+    # estimate_vram_mib 只读 os.path.getsize，文件内容根本不会被读。
     with tempfile.TemporaryDirectory() as d:
         m = os.path.join(d, "m.gguf")
         mm = os.path.join(d, "mm.gguf")
         with open(m, "wb") as f:
-            f.write(b"0" * (1024 * 1024 * 1024))        # 1 GiB
+            f.truncate(1024 * 1024 * 1024)              # 1 GiB
         with open(mm, "wb") as f:
-            f.write(b"0" * (512 * 1024 * 1024))        # 0.5 GiB
+            f.truncate(512 * 1024 * 1024)               # 0.5 GiB
         est = B.estimate_vram_mib(m, mm)
         assert 1400 < est < 1800                        # ~1.725 GiB（含 15% 余量）
     assert B.estimate_vram_mib(None, None) == 0

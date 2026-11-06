@@ -109,6 +109,15 @@ def lint_package(pkg_dir: str) -> Dict[str, Any]:
     if mid and spec.get("id") and spec["id"] != mid:
         _err(issues, "error", spec_name, f"id 与 manifest 不一致：{spec['id']} != {mid}")
 
+    # D2：manifest 是元信息的权威来源（§3.2），yaml 里若显式写了同名键却与它不同，
+    # 说明两份文件靠人脑同步已经漂移。只对**显式声明**的键比对：yaml 不写就是
+    # 「交给 manifest」，不算不一致。只告警不阻断，避免破坏存量包。
+    for k in ("title", "version", "priority"):
+        if k in spec and k in manifest and str(spec[k]) != str(manifest[k]):
+            _err(issues, "warning", spec_name,
+                 f"{k} 与 manifest 不一致：yaml={spec[k]!r} / manifest={manifest[k]!r}"
+                 "（manifest 是元信息权威，以它为准）")
+
     detect = spec.get("detect") or {}
     if not any(detect.get(k) for k in ("any", "all", "none", "regex")):
         _err(issues, "warning", "detect", "没有任何识别规则：auto 模式下会匹配每一页")
@@ -137,6 +146,13 @@ def lint_package(pkg_dir: str) -> Dict[str, Any]:
             cols = sec.get("columns") or []
             if not cols:
                 _err(issues, "error", where, f"表格分段 {key} 没有 columns")
+            # D1：start 在 §3.6.3 是 MUST（不写会把上半部分的「键：值」行当数据行，
+            # 产出混入表头的假表）。运行语义已经安全（声明了找不到就返回空），
+            # 但**不写**时此前没有任何提示；这里补 warning，不阻断以兼容存量包。
+            if not sec.get("start"):
+                _err(issues, "warning", where,
+                     f"表格分段 {key} 缺 start：运行时无法界定明细区起点，"
+                     "票据上半部分的键值行会被收成数据行（规范 §3.6.3 MUST）")
             col_keys = set()
             for j, c in enumerate(cols):
                 ck = c.get("key")

@@ -210,3 +210,17 @@ def test_kernel_modules_do_not_import_skill_scripts():
             "'model_select'))]; assert not bad, bad" % here)
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_cv2_thread_pool_is_bounded_for_qt():
+    """OpenCV 线程池必须钉为 1，否则 GUI 预筛之后 PySide6 起不来。
+
+    真跑全量测试时定位到：OpenCV 5 默认并行后端在 4GB 虚拟内存上限下
+    "Can't spawn new thread: res = 11"，随后 QtWidgets.abi3.so 无法 mmap，
+    QApplication([]) 挂起（表现是整套件卡住而不是失败）。修在
+    ``utils/handwriting_screen.py`` 的导入处；这条守卫防止有人删掉那行。
+    """
+    cv2 = pytest.importorskip("cv2")
+    assert cv2.getNumThreads() == 1, (
+        "handwriting_screen 必须调用 cv2.setNumThreads(1)：Qt 与 OpenCV "
+        "并行线程池同时存在会让 QApplication 挂起")

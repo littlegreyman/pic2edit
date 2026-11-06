@@ -1,9 +1,16 @@
-# pic2edit 凭证 schema 技术规格 v1.0
+# pic2edit 凭证 schema 技术规格 v1.1
 
-> 状态：**规范性文档（Normative）** · 2026-11-06 · 适用 `ocr_app/schemas/` 全部实现与后续「schema 生成流程」
+> 状态：**规范性文档（Normative）** · 2026-11-06 · 适用 `ocr_app/schemas/` 全部实现与「schema 生成流程」
 > 本文定义的是**契约**，不是教程。教程见 `schemas/README.md`，skill 对调用方的行为承诺见
 > `.workbuddy/skills/pic2edit-ocr/SKILL.md`，转换侧的接口说明见 `references/api_contract.md`。
 > 本文若与那三份文档冲突，以本文为准；发现冲突时应改那三份文档，不要改本文去迁就实现。
+>
+> **v1.1 修订（2026-11-06，生成器立项）**：补齐两处会让生成器「自己骗自己」的契约漏洞——
+> §6.4 生成包 MUST 写保守 `detect`（否则 auto 模式误命中每一页）、§6.6 自检拆成
+> 结构自检与抽取效果自检两层（`strict:false` 下 `hit_rate` 恒 1.0 是假通过）；
+> §5.9 补生成器 CLI 行；§6.1/§6.5/§6.7 把「342 字段」参数化——官网实测
+> `PPE.xsd` 为 `xs:element` 361 / `complexType` 10 / `simpleType` 297，不得硬编码；
+> §3.13 与 §7 的 D1/D2/D7 状态按实现进度更新。执行计划见 `docs/schema-gen-plan.md`。
 
 ---
 
@@ -84,7 +91,7 @@
 | **C8** | 制作与自检 | `schemas.cli new/validate/test/pack` | 包目录全部文件 | 新包 / `*.zip` / sha256 | lint 有 error → **拒绝 pack**（除非 `--force`） | §3.13 §5.9 |
 | **C9** | 插件逃生口 | 内置 `invoice`（`entry: __init__.py`） | `get_provider(pkg, manifest)` | 自定义 doc | detect 恒真，判定在 `extract` 内完成 | §3.12 |
 | **C10** | 覆盖安装 | 把内置包拷到用户目录改版本号 | `origin` 字段 | 覆盖注册表同名 id | `origin` 必须显示 `user`（**不是** `kind`） | §3.3 §5.5 |
-| **C11** | 生成器 | 【规划】`schema_gen` | XSD / XML / 国标 PDF / 样张 | 完整 schema 包 + provenance | 无版式信息 → **不生成 layout.html** | §6 |
+| **C11** | 生成器 | `python -m schema_gen`（**独立于 A 侧**） | XSD / XML / 国标 PDF / 样张 | 完整 schema 包 + provenance | 无版式信息 → **不生成 layout.html**；定位策略标 `pending` | §6 |
 | **C12** | 分发与校验 | `pack` 产出 zip；接收方解压 | zip 顶层目录名 = id | 用户目录 | 半份包（缺文件）必须在 C1 被跳过并告警 | §3.1 §5.9 |
 
 **由矩阵推出的三条硬规则**：
@@ -395,6 +402,8 @@ lint `_lint_plugin` 检查六个方法可调用 + `entry` 文件存在。【实�
 | `warning` | 缺 `title` / `version`；`detect` 无任何规则；分段缺 `label`；`text` 段无 `regex`；字段既无 `label` 也无 `regex` | 不阻断 |
 | `warning` | 字段在版式里没有对应占位（只取数不用版式是合法用法） | 不阻断 |
 | `warning` | `entry` 与 `layout` 同时声明 | 不阻断 |
+| `warning` | `table` 段缺 `start`（运营期会混入表头假表；规范 MUST，lint 只告警以兼容存量包）【D1·v1.1 补】 | 不阻断 |
+| `warning` | `schema.yaml` 与 `manifest.json` 的 `title` / `version` / `priority` 不一致【D2·v1.1 补】 | 不阻断 |
 | `info` | `text` 段无 `regex`（提示） | 不阻断 |
 
 `pack` 流程：先 `lint_package` → 不通过且无 `--force` 则拒绝 → 打包（剔除 `.pyc`/`__pycache__`/`.git`）→
@@ -407,8 +416,8 @@ lint `_lint_plugin` 检查六个方法可调用 + `entry` 文件存在。【实�
 
 | # | 差异 | 规范 | 现状 |
 |---|---|---|---|
-| D1 | `table` 段缺 `start` | 规范 MUST；lint 应拦 | 运行语义已保证「声明了却找不到 → 返回空」，但**不写 start** 时 lint 不告警。见 §7 |
-| D2 | `schema.yaml` 与 manifest 的 `version` 不一致 | SHOULD 一致 | lint 只检查 `id` 一致，不检查 `version` / `title` / `priority` |
+| D1 | `table` 段缺 `start` | 规范 MUST；lint 应告警 | **v1.1 已补**：`lint_package()` 对缺 `start` 的 table 段报 `warning`（不阻断，见 §3.13） |
+| D2 | `schema.yaml` 与 manifest 的 `version` 不一致 | SHOULD 一致 | **v1.1 已补**：lint 对 `title` / `version` / `priority` 三处不一致报 `warning`；generator 输出时保证一致 |
 | D3 | `origin` 可选值 | `builtin` / `user` | `PIC2EDIT_SCHEMA_DIR` 与 `reset_registry(extra_dirs)` 也标 `user`（合理，但生成器需知道） |
 
 ---
@@ -665,23 +674,47 @@ stdout **MUST** 只有产物绝对路径（单输入一行、批量每行一个�
 `new` 的 id 走 `_SAFE_ID_RE.fullmatch` + `commonpath` 根目录守卫；
 `pack` 的 zip 顶层目录 MUST 是 id，安装路径 `~/.pic2edit/schemas/`。【实现】
 
+**生成器是第三个入口（v1.1 补）**：`python -m schema_gen`（在 `ocr_app/` 下运行），
+与上表同属工作流 B，但**不是** `schemas.cli` 的子命令——它读的是外部标准原件，
+产出的是包，不参与包的校验/分发。
+
+| 入口 | 作用 | 关键参数 |
+|---|---|---|
+| `python -m schema_gen` | 从 S1/S2/S3 标准源生成声明式包骨架 | `--source`、`--out`、`--id`、`--standard`、`--detect-hint`、`--offline` |
+
+生成器 MUST NOT 写入 `schemas/`（那是注册表 `BUILTIN_ROOT`，放进去会被当成包扫描），
+MUST NOT 写入 `--out` 根目录之外；产物不自动安装，由调用方按 C10/C12 自行覆盖安装。【实现】
+
 ---
 
-# 第四部分 · 生成流程输出契约【规划】
+# 第四部分 · 生成流程输出契约
 
-> 本章是「schema 生成流程」的目标，**当前零实现**（审查报告 §6.1 已标 ❌）。
+> 本章的**契约条款**于 v1.0 确定、v1.1 补齐两处漏洞，是 `schema_gen` 必须遵守的输出规范；
+> 实现进度按 P1 → P2 → P3 分阶段落地，当前状态见 §7 D7（**不假装已做完**）。
 > 写在这里是为了让生成器的输出从第一天就受本文约束，而不是等写完再补规格。
 
 ## 6.1 输入源分级（可靠性从高到低）
 
 | 级 | 来源 | 能拿到什么 | 例子 |
 |---|---|---|---|
-| S1 | XSD / XML 实例 | 字段名、中文说明、类型、长度、精度、可空性、实体分组 | T/CICPA 0110—2026 附件7 `PPE.xsd`（9 实体 / 342 字段） |
-| S2 | 国标 PDF 的数据元定义表 | 标识符、名称、说明、表4 卡片表的行 | 正文第 6 章 83 个数据元、表 4 的 48 行 |
+| S1 | XSD / XML 实例 | 字段名、中文说明、类型、长度、精度、可空性、实体分组 | T/CICPA 0110—2026 通知页附件7 `PPE.xsd`：**9 实体 / 342 字段**；`xs:element` 总数 361（10 顶层实体 + 9 根容器 `ref` + 342 字段元素），`simpleType` 297（枚举/约束，非字段）。2026-11-06 实下载解析 |
+| S2 | 国标 PDF 的数据元定义表 | 标识符、名称、说明、表4 卡片表的行 | 正文第 6 章 83 个数据元、表 4 的 48 行（**待与 S1 交叉对账，对不上就登记差距，不杜撰**） |
 | S3 | 样张 OCR 文本 / 行框 | 票面真实标签词、位置关系、版式片段 | `samples/*.txt` + `.lines.json` |
 | S4 | 用户口述 / 手工描述 | 标题词、字段清单 | `schemas.cli new` 模板 |
 
 **MUST**：引用标准时给出官网 URL + 标准号 + sha256；来源不明的附件只作线索，不作论据。
+**MUST**：字段数由解析器给出，**不得硬编码**；统计口径 MUST 区分「`xs:element` 总数」
+与「字段元素数」——`PPE.xsd` 的 361 含 10 个顶层实体与 9 个根容器 `ref`，
+真正的字段是 342 个，把总数当字段会凭空多出 19 个空字段。
+`xs:simpleType` 多为枚举与类型约束，MUST NOT 当成字段。
+（立项前真跑解析时曾把 361 误判为「与 342 对不上」，已按实际结构纠正并写回本节——
+规格本身也要接受真跑验证。）
+
+> **S1 附件的两套编号（v1.1 补）**：通知页把 XSD 包叫「附件 7」、XML 实例包叫「附件 8」，
+> 而 zip 内目录名是标准正文的「附件5：文件输出格式」「附件6：实例」。台账 MUST 同时记两套，
+> 不要混用。zip 内中文名无 UTF-8 flag、是 **GBK**，reader MUST 用
+> `name.encode('cp437').decode('gbk')` 还原；实例包里固定资产文件名为 `PPE.XML`（大写扩展名），
+> 匹配 MUST 大小写不敏感。
 
 ## 6.2 IR（中间表示，不对外）
 
@@ -717,15 +750,25 @@ IR **MUST NOT** 写进 schema 包；包里只落 §3 的四个文件 + samples +
 
 | 能机械生成 | **不能**自动生成 |
 |---|---|
-| 字段集、实体分段、类型/长度约束、中文名、版本与 provenance、样张骨架 | **定位策略**（票面标签别名、`anchor` 方向、票面专用 regex）、`detect` 关键词、版式 HTML |
+| 字段集、实体分段、类型/长度约束、中文名、版本与 provenance、样张骨架、**保守 `detect` 与低优先级** | **定位策略**（票面标签别名、`anchor` 方向、票面专用 regex）、**能真正识别票面的** `detect` 关键词、版式 HTML |
 
 原因：CICPA 这类标准描述的是**数据模型 / 输出格式**（第 7 章数据结构表 + 附录 A XML 格式），
 **通篇不含版式与坐标**；财政部电子凭证类另有全国统一式样，但那是另一类输入。
 因此生成器的正确产物是「**数据格式齐全、定位策略待人工/样张补齐**」的包，
 MUST NOT 假装生成了可直接上线的抽取规则。
 
-> 由此推出：生成器 **MUST** 在产出里明确标注哪些字段 `locator: pending`，
-> 并把它们从 `required` 里排除（或把 `strict` 设为 `false`），否则包会在 auto 模式下永远不命中。
+由此推出三条 MUST（**v1.1 补齐漏洞 A**，前两条 v1.0 已有，第三条是新增的）：
+
+1. 生成器 **MUST** 在产出里明确标注哪些字段 `locator: pending`，并把它们从 `required`
+   里排除；生成包 **MUST** 写 `strict: false`。否则 `required` 缺失会让每页都未命中。
+2. 生成器 **MUST** 写一条**保守 `detect`**：默认用标准号 / 标准名作关键词
+   （`--detect-hint` 可覆盖），这些词**不会**出现在真实票面上；同时 **MUST** 设
+   `priority: 900`（最低优先级）。否则 `detect` 为空 → 运行时退化为「有正文就算命中」，
+   一个数百字段的骨架包会在 **auto 模式下匹配每一页**，把正常票据渲染成全空的字段化版式
+   ——比没有这个包更糟，且 `strict:false` 让 `bool(doc)` 恒真，日志会显示「命中」。
+3. `verify` **MUST** 用一份与标准无关的样张断言「auto 模式不得误命中该生成包」
+   （§6.6 第 4 步）。这条不能用单测里 `detect()` 的直接调用代替——必须走注册表
+   `apply_schemas(..., "auto")` 的真实路径，才覆盖得到 priority 与短路顺序。
 
 ## 6.5 provenance（MUST 落盘）
 
@@ -737,31 +780,56 @@ MUST NOT 假装生成了可直接上线的抽取规则。
   "sources": [{"kind": "S1|XSD", "url": "...", "standard": "T/CICPA 0110—2026",
                "sha256": "...", "retrieved_at": "..."}],
   "generated_at": "...",
-  "field_count": 342,
-  "coverage": {"model": 342, "locator_resolved": 0, "locator_pending": 342}
+  "field_count": "<N：由解析器给出，不得硬编码>",
+  "coverage": {"model": "<N>", "locator_resolved": 0, "locator_pending": "<N>"}
 }
 ```
 
 `x-*` 键 **MUST NOT** 影响装载；注册表忽略未知键。
+`coverage.locator_resolved` 为 0 是生成包的正常状态，也是 §6.6 是否启用效果门禁的开关。
 
-## 6.6 生成后自检流水线（MUST 全过才交付）
+## 6.6 生成后自检流水线（v1.1 拆两层，补齐漏洞 B）
+
+**为什么必须拆**：`check_samples()` 的 `hit` 判据是 `bool(doc)`。生成包
+`strict: false` + `detect` 保守时，`extract()` 会返回一个「字段全空但结构合法」的 doc，
+于是 **hit_rate 恒为 1.0** ——自检全绿，实际一个字段都没抽到。把这一条当门禁，
+等于让生成器自己给自己发合格证。因此门禁只挂在**结构**上，抽取效果在定位策略补齐前**只报告**。
+
+### 第一层 · 结构自检（门禁，MUST 全过才交付）
 
 ```
-1. lint_package(pkg)                      → 0 error（占位/repeat/正则/重复 key）
-2. check_samples(pkg) / cli test          → 至少 1 份样张、hit_rate ≥ 0.8
-3. cli pack                               → 打印 sha256 并核对 zip 顶层目录 = id
-4. 解压到 PIC2EDIT_SCHEMA_DIR             → cli list 显示 origin=user 与新 version
-5. 真跑一次转换（--schema <id> --format json）
-                                          → skill 的 schema.versions[id] 或页内
-                                            schema_version 与包一致（形状见 D8）
-6. 与 --schema none 对照                   → 两者 pages[].raw_text 逐字节相同
+1. lint_package(pkg)                → 0 error（占位/repeat/正则/重复 key/table.start）
+2. 注册表真实装载                    → get_registry().get(id) 非空，origin 正确
+3. ≥1 份 samples、三套 render 不崩   → render_md/txt/html 均无残留占位/注释
+4. IR 字段数 == XSD 解析出的字段数   → 逐一相等，不以「数量级相近」放过
+5. 同输入两次生成逐字节一致          → sha256 对账（时间戳类字段 MUST 可冻结）
+6. cli pack                          → 打印 sha256 并与 sha256sum 对账，zip 顶层目录 = id
+7. 解压到 PIC2EDIT_SCHEMA_DIR        → cli list 显示 origin=user 与新 version
+8. 真跑转换（--schema <id> --format json）
+                                     → skill 的 schema.versions[id] 或页内
+                                       schema_version 与包一致（形状见 D8）
+9. 与 --schema none 对照             → 两者 pages[].raw_text 逐字节相同
+10. auto 不误命中                    → 无关样张走 apply_schemas(..., "auto")，
+                                       该生成包 MUST NOT 命中（§6.4 第 3 条）
 ```
 
-第 5、6 步是「改完要验证是否真的符合需求」的具体化：**只看单测绿不算完成**。
+第 8、9、10 步是「改完要验证是否真的符合需求」的具体化：**只看单测绿不算完成**。
+
+### 第二层 · 抽取效果自检（此阶段**不设门禁**）
+
+| 条件 | 行为 |
+|---|---|
+| `coverage.locator_resolved == 0`（生成包的正常状态） | `check_samples()` 的 `hit_rate` **只打印、不判通过**；`verify` MUST 显式打印 `locator_pending: N` 与「定位策略待人工/样张补齐」 |
+| `coverage.locator_resolved > 0` **且** 样张是真实票面文本 | 才启用 `hit_rate ≥ 0.8` 门禁；未达标即拒绝交付 |
+| 样张是生成的骨架文本 | 即使有 resolved 也只报告——骨架文本必然命中，不构成证据 |
+
+`verify` 的输出 MUST 区分「结构自检通过」与「效果未验证」，**MUST NOT** 用一句
+「全部通过」把两者混在一起（日志与产物不符比没有日志更坏）。
 
 ## 6.7 规模与扩展
 
-- 342 字段级别 MUST 按实体拆 `sections`，单段字段数 SHOULD ≤ 30；
+- 数百字段级别（官网实测 `PPE.xsd` 有 **342 个字段元素**、分属 9 个实体）
+  MUST 按实体拆 `sections`，单段字段数 SHOULD ≤ 30（超过则按语义再分组）；
   table 段设 `limit` 防止整页正文被收成明细行。
 - 国标覆盖不到的票面要素（印章 / 二维码 / 手写 / 备注）用 `x-*` 前缀字段 +
   通用 `extra` 兜底区；跨分册引用数据元 MUST 标注来源分册，不要杜撰定义。
@@ -773,13 +841,13 @@ MUST NOT 假装生成了可直接上线的抽取规则。
 
 | # | 条目 | 规范 | 现状 | 建议 |
 |---|---|---|---|---|
-| D1 | `table` 段 `start` 必填 | MUST + lint 应拦 | 运行语义安全，lint 不告警 | 生成流程立项时补一条 lint warning |
-| D2 | yaml/manifest 的 version/title/priority 一致 | SHOULD | lint 只对账 `id` | 生成器输出时保证一致；后续补 lint |
+| D1 | `table` 段 `start` 必填 | MUST + lint 告警 | **v1.1 已补** `lint_package()` warning（不阻断，兼容存量包） | 生成器输出的 table 段 MUST 带 `start` |
+| D2 | yaml/manifest 的 version/title/priority 一致 | SHOULD | **v1.1 已补** lint warning；生成器输出时保证一致 | 保持 |
 | D3 | `origin` 取值 | `builtin`/`user` | env 与 extra_dirs 也记 `user` | 可接受，文档已写明 |
 | D4 | 四个采样参数进缓存键 | 理论上 SHOULD | 未进；SKILL.md 已写明重跑办法 | 若并入，须同步 §5.4、SKILL.md、缓存测试 |
 | D5 | 声明式 html_table / 合并单元格 | 不在本规格范围 | 由 `utils/table_html.py` 在无 schema 路径提供 | 不混进 schema 契约 |
 | D6 | 输入分诊（PDF 文本层 / 内嵌 XML） | §4.8 提到 | 未实现（审查报告 §6.2/6.3） | 单独立项，本规格不承诺 |
-| D7 | §6 生成器 | 规划 | 零实现 | **本次之后的工作** |
+| D7 | §6 生成器 | 契约已定（v1.1） | **实现中**：按 `docs/schema-gen-plan.md` 的 P1 输入层 → P2 本体 → P3 真跑分阶段落地 | 三个 Phase 各自收口（全量测试 + 独立 commit + 工作区干净）；完成后本行改「已实现」并附 §9 证据 |
 | D8 | `json` 顶层 `schema` 形状 | 两侧 SHOULD 一致 | GUI = `{id:version}`；Skill = statistics（版本在 `versions` 子键）。真跑中文样张核对过 | 不改现有契约以免破坏消费者；调用方以每页 `schema_version` 为准；统一需单独发版 |
 
 ---
