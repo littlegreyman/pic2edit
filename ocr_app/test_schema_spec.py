@@ -293,6 +293,44 @@ def test_spec_d1_table_without_start_warns_but_does_not_block(tmp_path):
     assert not any("缺 start" in i["message"] for i in res2["issues"])
 
 
+def test_spec_section6_generator_contract_matches_source():
+    """§6 生成器契约：常量、默认值、CLI 参数、唯一入口都要与源码对账。"""
+    from schema_gen import cli, emit, ir
+
+    assert ir.GENERATED_PRIORITY == 900
+    assert ir.SECTION_MAX_FIELDS == 30
+    assert ir.LOCATOR_PENDING == "pending"
+    with open(emit.__file__, encoding="utf-8") as f:
+        emit_src = f.read()
+    assert '"strict": False' in emit_src
+    assert '"priority": GENERATED_PRIORITY' in emit_src
+    assert '"locator": f.locator' in emit_src
+    # 「不产出 layout.html」必须查真实文件集合：emit 的模块说明里本就写着
+    # 「不生成 layout.html」这句话，grep 源码文字会把注释误判成产物。
+    probe = ir.IR(
+        schema_id="spec_probe", title="规格对账探针", version="0",
+        standard="", detect_hint="SPEC-PROBE-NOT-ON-REAL-PAGE",
+        xsd_member="PPE.xsd",
+        sections=(ir.IRSection(
+            key="probe", label="探针", mode="kv",
+            fields=(ir.IRField(key="k", label="K", raw_name="K",
+                               entity="Probe", source="spec"),)),))
+    produced = emit.render_files(probe)
+    assert "layout.html" not in produced, "生成器 MUST NOT 产出 layout.html"
+    assert set(produced) == {"manifest.json", "schema.yaml",
+                             "samples/README.md", "samples/skeleton.txt"}
+    help_text = cli.build_parser().format_help()
+    for flag in ("--source", "--member", "--id", "--out", "--standard",
+                 "--detect-hint", "--offline", "--frozen-time", "--no-verify"):
+        assert flag in help_text, f"规格 §5.9 声明的生成器参数缺失: {flag}"
+    assert os.path.isfile(os.path.join(HERE, "schema_gen", "__main__.py"))
+    with open(SPEC, encoding="utf-8") as f:
+        text = f.read()
+    for marker in ("python -m schema_gen", "priority: 900", "locator_pending: N",
+                   "--frozen-time", "结构自检", "抽取效果自检"):
+        assert marker in text, f"规格缺 §6 条款: {marker}"
+
+
 def test_spec_d2_metadata_drift_warns_only_when_declared(tmp_path):
     """D2：只对 yaml 里显式声明且与 manifest 冲突的键告警；不写就是交给 manifest。"""
     res = _lint_fixture(tmp_path, "d2_drift", _KV_SECTION,

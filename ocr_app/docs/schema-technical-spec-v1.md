@@ -680,7 +680,11 @@ stdout **MUST** 只有产物绝对路径（单输入一行、批量每行一个�
 
 | 入口 | 作用 | 关键参数 |
 |---|---|---|
-| `python -m schema_gen` | 从 S1/S2/S3 标准源生成声明式包骨架 | `--source`、`--out`、`--id`、`--standard`、`--detect-hint`、`--offline` |
+| `python -m schema_gen` | 从 S1/S2/S3 标准源生成声明式包骨架 | `--source`、`--member`、`--id`、`--title`、`--version`、`--standard`、`--detect-hint`、`--out`、`--cache-dir`、`--offline`、`--frozen-time`、`--force`、`--no-verify` |
+
+`--frozen-time` 用于「同输入两次生成逐字节一致」的自检（§6.6 第 5 步）；
+`--offline` 让 CI 只读已校验缓存、不依赖官网。stdout **只有**产物绝对路径，
+诊断走 stderr；退出码 `0` 成功且自检通过 / `1` 自检未通过 / `2` 用法·输入·输出错误。
 
 生成器 MUST NOT 写入 `schemas/`（那是注册表 `BUILTIN_ROOT`，放进去会被当成包扫描），
 MUST NOT 写入 `--out` 根目录之外；产物不自动安装，由调用方按 C10/C12 自行覆盖安装。【实现】
@@ -810,10 +814,15 @@ MUST NOT 假装生成了可直接上线的抽取规则。
                                        schema_version 与包一致（形状见 D8）
 9. 与 --schema none 对照             → 两者 pages[].raw_text 逐字节相同
 10. auto 不误命中                    → 无关样张走 apply_schemas(..., "auto")，
-                                       该生成包 MUST NOT 命中（§6.4 第 3 条）
+                                       该生成包 MUST NOT 命中（§6.4 第 3 条）；
+                                       再用 apply_schemas(..., "<id>") 走强制指定路径
+                                       断言同一结论——三态 <id> 只是把候选缩小到该
+                                       provider，**仍走 detect**（C4），不是无条件套用
 ```
 
 第 8、9、10 步是「改完要验证是否真的符合需求」的具体化：**只看单测绿不算完成**。
+`verify` 的报告在表述第 10 步时 MUST 写明「强制指定仍走 detect」，不得写成
+「强制指定却未命中」这种会让读者误判三态语义的句子。
 
 ### 第二层 · 抽取效果自检（此阶段**不设门禁**）
 
