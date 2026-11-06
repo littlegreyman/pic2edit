@@ -293,8 +293,12 @@ class DeclarativeProvider:
             for i, c in enumerate(cols):
                 if i < len(cells):
                     row[c["key"]] = cells[i]
-                elif i == len(cols) - 1 and len(cells) > len(cols):
-                    row[c["key"]] = " ".join(cells[i:])
+            # 票面一格被 OCR 切成多格时，多出来的并进最后一列，不静默丢弃。
+            # 这段原先写成上面 for 里的 `elif i == len(cols)-1 and ...`：
+            # 只要 len(cells) > len(cols)，对循环里每个 i 都有 i < len(cells)，
+            # 分支永远不可达——README 承诺了「多余的并入最后一列」，代码没做到。
+            if len(cells) > len(cols):
+                row[cols[-1]["key"]] = " ".join(cells[len(cols) - 1:])
             if any(row.get(c["key"]) for c in cols):
                 out.append(row)
             if sec.get("limit") and len(out) >= int(sec["limit"]):

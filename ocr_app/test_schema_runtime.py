@@ -80,6 +80,26 @@ def test_extract_table_rows(provider, sample_text):
     assert rows[1]["net_value"] == "236558.00"
 
 
+def test_extract_table_keeps_surplus_cells_in_last_column():
+    """OCR 把最后一格切成多格时，多出来的并入最后一列，不静默丢失。
+
+    README 一直这么写，但实现里的 elif 分支不可达（i < len(cells) 恒真），
+    修规格时才发现。这里钉住，防止再次"文档承诺了、代码没做到"。
+    """
+    p = runtime.DeclarativeProvider(ASSET_DIR, {}, {
+        "id": "x", "strict": False,
+        "sections": [{"key": "t", "mode": "table", "start": "明细", "stop": "合计",
+                      "columns": [{"key": "a", "label": "期间"},
+                                  {"key": "b", "label": "金额"}]}]})
+    # 无坐标：按 2+ 空白切列，得到 3 格（最后一格被切成"880.00"与"含税"）
+    text = "明细\n期间  金额\n2026-01  880.00  含税\n合计"
+    doc = p.extract(text, [], 0, 0)
+    rows = doc["tables"]["t"]
+    assert len(rows) == 1, rows
+    assert rows[0]["a"] == "2026-01"
+    assert rows[0]["b"] == "880.00 含税"
+
+
 def test_extract_table_respects_stop(provider, sample_text):
     """合计行之后不再收：收了就会多出一条"合计"假明细。"""
     doc = provider.extract(sample_text, [], 0, 0)

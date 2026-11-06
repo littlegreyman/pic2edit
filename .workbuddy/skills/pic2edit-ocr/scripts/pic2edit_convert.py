@@ -804,7 +804,10 @@ def _render(data, fmt, out_path, input_path, prov, mode):
         # 忠实版式（原图垫底）的样式是通用的，无论有没有命中 schema 都可能用到
         extra_css = "\n".join(c for c in (schema_css(pages), faithful_css()) if c)
         stamp = _schema_stamp(pages)
-        meta = f'<meta name="pic2edit-schema" content="{stamp}">' if stamp else ""
+        # stamp 里的 version 来自 manifest（外部数据），必须转义；GUI 侧
+        # export_html 一直这么做，skill 侧此前漏了，两侧规范要一致。
+        meta = (f'<meta name="pic2edit-schema" content="{_esc_html(stamp)}">'
+                if stamp else "")
         text = ("<!DOCTYPE html>\n<html lang='zh-CN'><head><meta charset='utf-8'>"
                 f"{meta}<title>识别结果</title>"
                 f"<style>{HTML_CSS}\n{extra_css}</style></head>"
