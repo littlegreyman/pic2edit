@@ -9,10 +9,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont
 
 APP_NAME = "pic2edit"
-APP_VERSION = "alpha 0.19"
+APP_VERSION = "alpha 0.20"
 APP_AUTHOR = "littlegreyman"
 # 最新版本（Git tag）对应的发布日期
-APP_RELEASE_DATE = "2026-11-01"
+APP_RELEASE_DATE = "2026-11-06"
 # 主要功能简介：控制在 20 个中文字符以内
 APP_TAGLINE = "本地离线OCR·图片转可编辑文档"
 

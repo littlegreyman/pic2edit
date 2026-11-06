@@ -1,6 +1,27 @@
-pic2edit 0.19 (alpha)
+pic2edit 0.20 (alpha)
 ========================
-本地离线图片转可编辑文档工具 —— alpha 0.19 里程碑。
+本地离线图片转可编辑文档工具 —— alpha 0.20 里程碑。
+
+alpha 0.20 相对 0.19 的变更：
+- 全量代码审查后的修复收口：缓存命中时 schema / 底图 / 坐标按需重算，
+  `--format html` 不再静默退化成纯文本；GUI 与 skill 的 JSON 溯源统一只写文件名；
+  引擎拉起端口跟随 `--url`（此前恒 8080 且会留下孤儿进程）；GUI 预览与导出 HTML
+  统一过白名单清洗；表格 rowspan/colspan 夹取与整表规模上限。
+- 引擎诊断下沉为 GUI / skill 共用的非 Qt 模块（显存预检 → 拉起 → 输出落盘 →
+  平台化提示）；GUI 补齐与 skill 对齐的能力：目录 / 多文件输入、按 mode 下发
+  提示词与采样参数、分辨率模式真正经 `--mode` 传给 transformers 服务。
+- 凭证 schema 生成流程（P1–P3，技术规格 v1.1 为前置契约）：官网原件输入层
+  （SHA256 钉死、GBK 文件名还原、Zip Slip 守卫）→ IR / emit / verify / CLI
+  生成器本体 → 覆盖安装与真跑转换验证。唯一入口 `python -m schema_gen`
+  产出「数据格式齐全、定位策略待补」的声明式骨架包，**不假装可直接上线**；
+  真跑 28/28 断言全过，PDF↔XSD 交叉对账 9/9 实体、120/120 唯一字段名、
+  101/101 中文标签。
+- 需求符合性验证矩阵补齐；全量测试 313 passed、ruff 全绿。
+- 发布说明全量同步（README / INSTALL / about / iss / THIRD_PARTY_NOTICES），
+  补版本一致性对账测试；CI 补齐 PySide6 所需的 libEGL 系统库。
+
+> 归位说明：0.19 条目里提前写入的「引擎诊断下沉 / 供应链加固 / skill 三项能力」
+> 实为 11-06 的提交，按真实提交时间归到 0.20；已发布的 0.19 记录保持不改。
 
 alpha 0.19 相对 0.18 的变更：
 - 架构收口为「双前端共享内核」：GUI(Qt) 与 skill(CLI) 都只经 backend_api 门面访问内核，
@@ -37,12 +58,17 @@ alpha 0.16 相对 0.15 的变更：
 - 修复 build_logos.py 硬编码个人路径的隐私泄露。
 
 核心能力：
-- DeepSeek-OCR 本地离线 OCR，把 jpg/tif/pdf 转可编辑 Markdown。
+- 判别式优先、零幻觉：RapidOCR 先跑（纯 CPU），失败才由 VLM 兜底并过幻觉筛查。
+- DeepSeek-OCR 本地离线 OCR，把 jpg/tif/pdf 转可编辑文档。
 - 三后端可切换（默认 llama_cpp）：llama.cpp（官方预编译 llama-server + Q4_K_M GGUF，最省显存）、Ollama、Transformers（独立 Python 3.11 常驻服务）。
-- PySide6 双栏 GUI（左待转换、右可编辑），支持导出 .docx/.md/.txt。
-- 输入：PDF 整页高 DPI 渲染（不再抽取页内嵌图）；TIF 多帧拆分；统一落地临时 PNG。
+- PySide6 双栏 GUI（左待转换、右可编辑），支持导出 .md/.txt/.docx/.html/.json。
+- 输入：PDF 整页高 DPI 渲染（不再抽取页内嵌图）；TIF 多帧拆分；目录 / 多文件批量。
+- 凭证 schema 三态 `none|auto|<id>`，drop-in 包优先；无 schema 时用
+  「原图垫底 + 坐标透明文字层」忠实还原版面。
 - 输出格式下拉（主窗口工具栏）：Markdown / 纯文本 OCR / 图表·公式 / 表格（键值→表）/ 表格（HTML，合并单元格）——五种。
-- 验证：_smoke_test.py（无界面端到端）、verify_backend.py（契约 mock + --live 真机 OCR）。
+- `python -m schema_gen` 从国标 XSD 生成 schema 骨架包；`python -m schemas.cli` 做 lint / pack。
+- 验证：全量 `pytest -q`（313 项）+ ruff；`_smoke_test.py`（无界面端到端）、
+  `verify_backend.py`（契约 mock + --live 真机 OCR）。
 
 alpha 0.15 相对 0.1 的变更：
 - 生成参数级修退化：请求 payload 固定 temperature=0（贪心/确定性）+ repeat_penalty=1.10

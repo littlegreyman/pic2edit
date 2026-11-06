@@ -25,16 +25,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      - name: Install system deps (PySide6 needs libGL)
+      # PySide6 的 QtWidgets.abi3.so 在导入期就要 dlopen 这些系统库；
+      # QT_QPA_PLATFORM=offscreen 只省 X server，省不掉动态链接依赖。
+      # 2026-11-06 实测：只装 libgl1 会在收集期报
+      #   ImportError: libEGL.so.1: cannot open shared object file
+      # （run 42164106400，exit 2 / 2 秒）。libEGL.so.1 由 libegl1 提供。
+      - name: Install system deps (PySide6 needs libGL/libEGL + X11)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1 libglib2.0-0
+          sudo apt-get install -y \
+            libgl1 libegl1 libglib2.0-0 \
+            libxkbcommon0 libdbus-1-3 libfontconfig1
+      # 用钉死的 lock 而非下限式 requirements.txt，避免云端装到与本地不同的版本；
+      # pytest 已在 lock 里，不再单独装未钉版本。
       - name: Install Python deps
         run: |
           cd ocr_app
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
+          pip install -r requirements.lock
+      - name: Report resolved versions (diagnostics)
+        run: pip freeze
       - name: Run tests
         run: |
           cd ocr_app
