@@ -63,8 +63,9 @@ def test_schema_combo_lists_modes_and_discovered_schemas():
     datas = [combo.itemData(i) for i in range(combo.count())]
     assert MODE_AUTO in datas and MODE_NONE in datas
     assert "invoice" in datas, f"已发现的 schema 应出现在下拉里，实际: {datas}"
-    # 默认选中项必须与配置一致（默认 auto），否则用户一开界面就改变了行为
-    assert combo.currentData() == Config().schema_mode
+    # 下拉选中项必须与「本窗口加载到的配置」一致。不能用 Config() 新建默认对象比较：
+    # 真机 config.json 可能已被用户改成具体 schema id，新建对象恒为 auto，会让用例误报。
+    assert combo.currentData() == w.cfg.schema_mode
     w.close()
     app.processEvents()
 

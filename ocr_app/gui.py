@@ -24,9 +24,7 @@ from backend_api import MODE_AUTO, MODE_NONE, list_schemas
 from worker import OcrWorker
 from document_controller import DocumentController, Selection
 from utils.input_prep import prepare_input, InputItem, InputDocument
-from utils.export_docx import save_text, md_pages_to_docx
-from utils.assemble import assemble_document
-from utils.export_formats import export_html, export_json
+from utils.export_formats import export_by_ext
 from utils.html_safety import sanitize_html
 from utils import usage_log
 from utils.logging_setup import get_logger, log_env_on_error
@@ -1224,8 +1222,7 @@ class MainWindow(QMainWindow):
                 "如需分别导出，请逐个文档选择后导出。"
             )
         pages = [self.items[i] for i in idxs]
-        texts = [it.result for it in pages]
-        if not any(t.strip() for t in texts):
+        if not any((getattr(it, "result", "") or "").strip() for it in pages):
             QMessageBox.information(self, "提示", "该文档尚未转换或结果为空")
             return
         out_dir = self.cfg.output_dir or os.path.dirname(doc.source_path)
@@ -1237,14 +1234,10 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage(f"正在导出：{os.path.basename(path)} …")
         try:
-            if _ext == "docx":
-                md_pages_to_docx(texts, path)   # 每页之间插入真实分页符
-            elif _ext == "html":
-                export_html(pages, path)
-            elif _ext == "json":
-                export_json(pages, doc.source_path, path)
-            else:  # md / txt
-                save_text(assemble_document(texts), path)
+            # 统一入口：命中 schema 的页按字段化版式渲染。此前 md/txt/docx 是手写
+            # 旁路（直接拼 it.result），绕过 export_formats，导致凭证类型在主线不可见。
+            # 详见 docs/schema-package-v2-plan.md B1。
+            export_by_ext(pages, path, _ext, doc.source_path)
             self.statusBar().showMessage(f"导出成功：{path}")
             _logger.info("exported: %s (%d pages, format=%s)", path, len(pages), _ext)
             QMessageBox.information(self, "导出成功", f"已保存到：{path}")
