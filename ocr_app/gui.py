@@ -17,14 +17,14 @@ from PySide6.QtWidgets import (
 
 import markdown
 
-from config import Config, RESOLUTION_MODES, PROMPT_LABELS, ModelParams, MODEL_PARAM_PRESETS
+from config import Config, RESOLUTION_MODES, PROMPT_LABELS, GUI_MODE_KEYS, ModelParams, MODEL_PARAM_PRESETS
 from backend_api import OllamaBackend, TransformersBackend, LlamaCppBackend
 from backend_api import ServerStarter, EngineLauncher
 from backend_api import MODE_AUTO, MODE_NONE, list_schemas
 from worker import OcrWorker
 from document_controller import DocumentController, Selection
 from utils.input_prep import prepare_input, InputItem, InputDocument
-from utils.export_formats import export_by_ext
+from utils.export_formats import export_by_ext, item_text
 from utils.html_safety import sanitize_html
 from utils import usage_log
 from utils.logging_setup import get_logger, log_env_on_error
@@ -433,7 +433,7 @@ class MainWindow(QMainWindow):
         if getattr(self.cfg, "auto_reuse_last_success", False) and self.cfg.last_success:
             ls = self.cfg.last_success or {}
             pt = ls.get("prompt_template")
-            if pt and pt in PROMPT_LABELS:
+            if pt and pt in GUI_MODE_KEYS:
                 self.cfg.prompt_template = pt
             mp = ls.get("model_params")
             if isinstance(mp, dict):
@@ -481,17 +481,18 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(slot)
             toolbar.addWidget(btn)
 
-        # 输出格式（提示词模板）下拉：让“表格”模式在主线即可选，不必进设置
-        toolbar.addWidget(QLabel("  输出格式："))
+        # 识别模式（提示词模板）下拉：只列 GUI 已接通的模式，html_table 不在其中
+        toolbar.addWidget(QLabel("  识别模式："))
         self.template_combo = QComboBox()
-        for key, label in PROMPT_LABELS.items():
-            self.template_combo.addItem(label, key)
+        for key in GUI_MODE_KEYS:
+            self.template_combo.addItem(PROMPT_LABELS[key], key)
         self._sync_template_combo()
         self.template_combo.currentIndexChanged.connect(self._on_template_changed)
         toolbar.addWidget(self.template_combo)
 
-        # 凭证类型（schema 三态）：与「输出格式」同级——它决定**这次转换按哪套字段规则抽**，
-        # 而不是导出时才生效，所以必须放在主线可见的位置，不能塞进导出对话框。
+        # 凭证类型（schema 三态）：决定这次转换按哪套字段规则抽。
+        # 结果挂在 item.schema* 上；默认编辑框仍显示 OCR 原文，可勾选
+        # 「字段化预览」查看；P0 起导出也统一走 schema 渲染。
         toolbar.addWidget(QLabel("  凭证类型："))
         self.schema_combo = QComboBox()
         self._reload_schema_combo()
@@ -552,6 +553,11 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.editor, "编辑（Markdown）")
         self.tabs.addTab(self.viewer, "预览")
         rv.addWidget(self.tabs, 1)
+        # 默认显示 OCR 原文；勾选后切到 schema 字段化视图（只读，避免回写污染原文）。
+        self.schema_view = QCheckBox("字段化预览（只读，命中凭证时）")
+        self.schema_view.setChecked(False)
+        self.schema_view.toggled.connect(self._on_schema_view_toggled)
+        rv.addWidget(self.schema_view)
 
         split.addWidget(left)
         split.addWidget(right)
@@ -612,8 +618,12 @@ class MainWindow(QMainWindow):
     # ---------- 输出格式（提示词模板）----------
     def _sync_template_combo(self):
         idx = self.template_combo.findData(self.cfg.prompt_template)
-        if idx >= 0:
-            self.template_combo.setCurrentIndex(idx)
+        if idx < 0:
+            # 配置里存了 GUI 不支持的模式（如历史 html_table）：显式回落到默认
+            # 并同步 cfg，避免「下拉显示 A、实际按 B 跑」。
+            self.cfg.prompt_template = "markdown"
+            idx = self.template_combo.findData("markdown")
+        self.template_combo.setCurrentIndex(max(idx, 0))
 
     def _on_template_changed(self, _idx):
         key = self.template_combo.currentData()
@@ -875,6 +885,28 @@ class MainWindow(QMainWindow):
             idx = current.data(0, Qt.UserRole + 1)
             self._show_page(obj, idx)
 
+    # ---------- 原文 / 字段化预览 ----------
+    def _display_text(self, idx: int) -> str:
+        """当前视图文本：默认 OCR 原文；勾选后是 schema 字段化结果。"""
+        it = self.items[idx]
+        if self.schema_view.isChecked():
+            return item_text(it, "md")
+        return it.result or ""
+
+    def _refresh_current_view(self):
+        if self.current < 0 or self.current >= len(self.items):
+            return
+        text = self._display_text(self.current)
+        self.editor.blockSignals(True)
+        self.editor.setPlainText(text)
+        # 字段化视图不对应 item.result，回写会用渲染结果覆盖原文。
+        self.editor.setReadOnly(self.schema_view.isChecked())
+        self.editor.blockSignals(False)
+        self._render_preview(text)
+
+    def _on_schema_view_toggled(self, _checked):
+        self._refresh_current_view()
+
     def _show_page(self, it: InputItem, idx: int):
         self.current = idx
         pix = QPixmap(it.image_path)
@@ -883,12 +915,11 @@ class MainWindow(QMainWindow):
                 pix.scaled(self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio,
                            Qt.TransformationMode.SmoothTransformation)
             )
-        self.editor.blockSignals(True)
-        self.editor.setPlainText(it.result or "")
-        self.editor.blockSignals(False)
-        self._render_preview(it.result or "")
+        self._refresh_current_view()
 
     def _on_edit(self):
+        if self.schema_view.isChecked():
+            return  # 字段化视图只读，不回写
         if self.current >= 0:
             self.items[self.current].result = self.editor.toPlainText()
             self._render_preview(self.editor.toPlainText())
@@ -1079,10 +1110,7 @@ class MainWindow(QMainWindow):
 
     def _on_item_done(self, idx, text):
         if idx == self.current:
-            self.editor.blockSignals(True)
-            self.editor.setPlainText(text)
-            self.editor.blockSignals(False)
-            self._render_preview(text)
+            self._refresh_current_view()
         # 更新树状态显示
         tw = self.page_tree_items[idx] if idx < len(self.page_tree_items) else None
         if tw is not None:

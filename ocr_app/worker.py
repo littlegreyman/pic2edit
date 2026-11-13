@@ -96,6 +96,11 @@ class OcrWorker(QThread):
         for n, idx in enumerate(self.indices, 1):
             item: InputItem = self.items[idx]
             item.status = "转换中"
+            # 清掉上一轮遗留的行框坐标：同一 item 反复转换时，若本轮走 VLM，
+            # _maybe_layout_table 会拿旧坐标重建出与当前结果无关的表格。
+            item.lines = None
+            item.img_w = 0
+            item.img_h = 0
             self.progress.emit(n, total, item.name)
             try:
                 # 走统一流水线：判别式优先（RapidOCR，零幻觉）+ VLM 兜底（zh 提示词 +

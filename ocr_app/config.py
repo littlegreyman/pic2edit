@@ -57,6 +57,11 @@ PROMPT_LABELS = {
     "html_table": "表格（HTML/合并单元格）",
 }
 
+# GUI 下拉只暴露已接通的模式。html_table 的 HTML 表格链路在 GUI 侧从未接通
+# （worker 会把它降级成 markdown，再被坐标重建覆盖），因此不出现在下拉中。
+# CLI / skill 仍可经 --mode html_table 使用：PROMPT_LABELS 与 routing 保持不变。
+GUI_MODE_KEYS = ("markdown", "ocr", "figure", "table")
+
 
 @dataclass
 class ModelParams:

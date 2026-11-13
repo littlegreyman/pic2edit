@@ -318,6 +318,27 @@ def _guess_party_name(band):
     return best
 
 
+#: 票面其它区块的标签词。坐标法在「地址、电话：」右侧取同排文本块时，
+#: 纸电票的密码区/校验码常恰好落在那一排，会被误当成买方地址。
+_ADDR_LABEL_WORDS = (
+    "密码区", "校验码", "机器编号", "发票代码", "发票号码", "开票日期",
+    "纳税人识别号", "开户行", "账号", "备注", "收款人", "复核", "开票人",
+    "发票专用章", "价税合计", "合计",
+)
+
+
+def _plausible_address(v):
+    """地址必须像地址：有中文、够长、且不是票面其它区块的标签词。
+
+    「密码区」三个字含中文，能绕过原有的 ``_has_cjk`` 检查（真机上海普票实测
+    ``buyer.address == "密码区"``）。宁可留空也不要输出一个看似可信的错值。
+    """
+    s = re.sub(r"[\s,，、:：;；\-—]", "", v or "")
+    if not _has_cjk(s) or len(s) < 4:
+        return False
+    return not any(w in s for w in _ADDR_LABEL_WORDS)
+
+
 def _extract_party_geom(lines, y_lo, y_hi, H):
     """用 OCR 坐标抽取购销方四要素（名称 / 纳税人识别号 / 地址电话 / 开户行账号）。
 
@@ -381,8 +402,8 @@ def _extract_party_geom(lines, y_lo, y_hi, H):
         v = _label_value(ln_addr, band, tol)
         if v:
             _a, _ph = _split_addr_phone(v)
-            # 地址必须有中文（防密码区/税号串位），电话必须是号码形态
-            if _has_cjk(_a):
+            # 地址必须有中文、够长且不是票面标签词（防密码区/税号串位）
+            if _plausible_address(_a):
                 out["address"] = _a
             if _ph and re.search(r"\d", _ph):
                 out["phone"] = _ph
@@ -547,8 +568,18 @@ def _extract_items_from_lines(lines, W, H):
         texts = [b["text"].strip() for b in band if b["text"].strip()]
         if not texts:
             return True
-        if any(re.search(r"合计|小写|大写", t) for t in texts):
+        joined = re.sub(r"\s+", "", "".join(texts))
+        if re.search(r"合计|小写|大写", joined):
             return True  # "（小写）110657.00" 这类汇总行不能当成明细
+        # 「合 计」常被 OCR 拆成「合」「计」两个框，逐框正则抓不到。
+        # 这类行只有碎片标签 + 金额、没有任何真实品名，应判为汇总行。
+        has_real_name = any(
+            len(re.findall(r"[\u4e00-\u9fff]", t)) >= 4 for t in texts
+        )
+        if not has_real_name and any(
+            re.fullmatch(r"[合计小总\s]{1,3}", t) for t in texts
+        ):
+            return True
         # 合计行的金额常把小数点读成冒号/短横（`¥181：62` = 181.62），货币符号
         # 也常被读成 `Y`/`￥`/空白。判据：**整行没有任何汉字**且全部单元格都是"数字串"。
         # 明细行一定带汉字（品名/规格），所以不会被这条误杀。

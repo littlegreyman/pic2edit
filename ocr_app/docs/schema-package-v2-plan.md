@@ -362,3 +362,27 @@ GUI 填充时按白名单过滤，避免「删了下拉、后端字典也跟着�
 编辑器默认原文是**保持现有行为**（`setPlainText(item.result)`），
 字段化预览作为显式切换；因此 P1 不改动 `_on_item_done` 的默认路径，
 只新增一个受控入口，降低回归风险。
+
+---
+
+## 8. 实施进度
+
+| Phase | 状态 | 验证 |
+|---|---|---|
+| P0 统一导出入口 | ✅ `61358a8` | 全量 323 passed ×2、ruff 绿；GUI 5 种格式与 `export_by_ext` 逐格式对账 |
+| P1 抽取正确性与模式路由 | ✅ 本 commit | 全量 330 passed ×2、ruff 绿；脱敏上海票端到端 md 1445B 含 `<!-- schema: invoice@1.0.0 -->`、无「密码区」/「合」错值 |
+| P2 包结构契约 v2 | ⏳ 待做 | 规格 §3.1 / lint / `cli new` / `schema_gen.emit` / 静态门禁 |
+| P3 内置包补齐 | ⏳ 待做 | 含决策 1：**独立 `invoice_digital` 包**，与 `invoice` 的 detect 必须互斥 |
+| P4 真机验收与发布收口 | ⏳ 待做 | 用户原生桌面；CI 在 HEAD 上绿；版本位与说明文档对账 |
+
+P1 落地要点（与 §4 的差异说明）：
+- `html_table` 按决策 2 只从 GUI 下拉移除（`config.GUI_MODE_KEYS` 白名单），
+  后端 `PROMPT_TEMPLATES` / `routing` / CLI / skill 全部保留；
+  配置里残留的非法模式在 `_sync_template_combo()` 显式回落到 markdown。
+- 编辑器按决策 4 默认原文；新增只读的「字段化预览」勾选框，
+  `_on_edit` 在只读态不回写，避免渲染结果覆盖原文。
+- `worker.run()` 每页转换前清 `lines/img_w/img_h`，切断跨轮坐标污染。
+- 抽取器两处修复 + 脱敏 golden 样张 `testdata/shanghai_invoice_ocr.json`
+  （公司名/人名/地址/银行与所有长标识串均已脱敏，测试内含结构自检）。
+- 草案 P1 原列「补 3 份 golden 样张」，本轮先落 1 份真机样张 + 既有
+  `testdata/invoice_sample.py`；其余 2 份（数电票骨架等）随 P3 补齐。
