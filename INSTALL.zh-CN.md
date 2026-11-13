@@ -38,8 +38,8 @@
   从根上避免生成式模型凭空编造文字。
 - **凭证 schema 三态**：`none / auto / <id>`，票种以 drop-in 包形式扩展，不改转换代码；
   未命中 schema 时用「原图垫底 + 坐标文字层」忠实还原版面。
-- **五种输出模式 / 五种导出格式**：Markdown、纯文本、图表·公式、键值→表、HTML 合并单元格表；
-  导出 `.md / .txt / .docx / .html / .json`。
+- **四种识别模式 / 五种导出格式**：识别模式为 Markdown、纯文本、图表·公式、键值→表
+  （`html_table` 未接通 GUI，仅 CLI / skill 可用）；导出 `.md / .txt / .docx / .html / .json`。
 - **三后端可切换**：llama.cpp（默认、最轻量）、Ollama（可选）、Transformers（可选）。
 - **目录 / 多文件批量**：一次导入整目录或多张图片逐页转换；坏文件给出可读错误并跳过。
 
@@ -185,7 +185,7 @@ download_models.bat   # Windows
 ```bash
 cd ocr_app
 # Windows 把 ./.venv/bin/python 换成 .venv\Scripts\python.exe
-./.venv/bin/python -m pytest -q          # 全量回归 319 项（两次独立 EXIT=0）
+./.venv/bin/python -m pytest -q          # 全量回归（无 GPU 也能跑完）
 ./.venv/bin/python -m ruff check .       # 静态检查（ruff 钉 0.17.4）
 ./.venv/bin/python _smoke_test.py        # 无界面冒烟（PDF/TIF/导出/三后端）
 ./.venv/bin/python verify_backend.py     # 后端契约自检（严格 mock，无需模型）

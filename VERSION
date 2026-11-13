@@ -65,9 +65,10 @@ alpha 0.16 相对 0.15 的变更：
 - 输入：PDF 整页高 DPI 渲染（不再抽取页内嵌图）；TIF 多帧拆分；目录 / 多文件批量。
 - 凭证 schema 三态 `none|auto|<id>`，drop-in 包优先；无 schema 时用
   「原图垫底 + 坐标透明文字层」忠实还原版面。
-- 输出格式下拉（主窗口工具栏）：Markdown / 纯文本 OCR / 图表·公式 / 表格（键值→表）/ 表格（HTML，合并单元格）——五种。
+- 识别模式（主窗口工具栏）：Markdown / 纯文本 OCR / 图表·公式 / 表格（键值→表）——四种；
+  `html_table` 未接通 GUI，仅 CLI / skill 保留。导出格式按扩展名另分五种。
 - `python -m schema_gen` 从国标 XSD 生成 schema 骨架包；`python -m schemas.cli` 做 lint / pack。
-- 验证：全量 `pytest -q`（313 项）+ ruff；`_smoke_test.py`（无界面端到端）、
+- 验证：全量 `pytest -q` + ruff；`_smoke_test.py`（无界面端到端）、
   `verify_backend.py`（契约 mock + --live 真机 OCR）。
 
 alpha 0.15 相对 0.1 的变更：

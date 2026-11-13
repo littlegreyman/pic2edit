@@ -31,12 +31,12 @@
   - **PDF**：整页渲染为高 DPI 图像做完整版面 OCR（不再单独抽取页内嵌图：插图无文字，判别式返回空、VLM 却会脑补英文垃圾，见 `utils/input_prep.py` 模块注释）。
   - **多页 TIF**：逐帧拆分，每帧单独转换。
 - **分辨率模式（仅 transformers 后端）**：Tiny / Small / Base / Large / Gundam（动态多尺度，适合复杂版面）。这是**模型加载期**参数，改动后需重启本地服务；GUI 里该下拉放在“Transformers”子页，由启动器以 `--mode` 传给 `transformers_server.py`。llama.cpp / Ollama 两个后端不消费它（量化 GGUF 的分辨率在模型内固定）。
-- **提示词模板**：转 Markdown / 纯 OCR / 解析图表 / 表格（键值→表）/ 表格（HTML，合并单元格）——五种，与主窗口“输出格式”下拉一致。
+- **提示词模板（GUI 识别模式）**：转 Markdown / 纯 OCR / 解析图表 / 表格（键值→表）——四种，与主窗口「识别模式」下拉一致；`html_table` 未接通 GUI，仅 CLI / skill 的 `--mode html_table` 可用。导出格式按扩展名另分五种。
 - **输出与导出**：右栏直接编辑 Markdown，可切换“编辑/预览”，一键导出 `.md / .txt / .docx / .html / .json`。
 
 ## 目录结构
 
-> 按 `git ls-files` 逐条对账；`test_*.py` 为 319 项测试，此处未逐一列出。
+> 按 `git ls-files` 逐条对账；`test_*.py` 为全量回归测试，此处未逐一列出。
 
 ```
 ocr_app/
@@ -238,7 +238,7 @@ run_llamacpp_server.bat   :: 启动本地 OCR 服务（默认 http://localhost:8
 常规回归（在 `ocr_app/` 下执行；Windows 把解释器换成 `.venv\Scripts\python.exe`）：
 
 ```bash
-./.venv/bin/python -m pytest -q       # 全量 319 项，无 GPU 也能跑完
+./.venv/bin/python -m pytest -q       # 全量回归，无 GPU 也能跑完
 ./.venv/bin/python -m ruff check .    # 静态检查，ruff 钉 0.17.4
 ./.venv/bin/python _smoke_test.py     # PDF/TIF/导出/三后端/启动器回归
 ```

@@ -162,3 +162,42 @@ def test_third_party_notices_tracks_requirements():
     assert not missing, f"THIRD_PARTY_NOTICES 缺依赖署名: {missing}"
     assert "rapidocr_onnxruntime" not in notice, "合规文件仍写已废弃包名"
     assert ".venv_ocr" not in notice, "合规文件仍写已弃用的子环境"
+
+
+_CN_NUM = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六"}
+
+
+def _gui_modes() -> tuple[str, ...]:
+    """静态读 config.GUI_MODE_KEYS；不 import config（其导入期有写探测副作用）。"""
+    src = _text("ocr_app/config.py")
+    match = re.search(r"^GUI_MODE_KEYS\s*=\s*\(([^)]*)\)", src, re.M)
+    assert match, "config.py 找不到 GUI_MODE_KEYS 定义"
+    return tuple(re.findall(r"[\"']([a-z_]+)[\"']", match.group(1)))
+
+
+def test_user_docs_match_gui_modes():
+    """Check List ⑥：GUI 识别模式数量变化时，四份用户文档必须同步。
+
+    起因（2026-11-13）：P1 把 html_table 从 GUI 移除后，README 的「输出格式」
+    章节、ocr_app/README、INSTALL、VERSION 仍写「五种模式」，与同一份 README
+    的「四种 GUI 识别模式」自相矛盾，而 Check List ⑥ 误判为已同步。
+    本门禁从实现反向钉住文档，杜绝「改了实现、忘了说明」。
+    """
+    modes = _gui_modes()
+    assert modes, "_gui_modes() 解析结果为空（正则失效？）"
+    assert "html_table" not in modes, "决策 2：html_table 不得回到 GUI 下拉"
+    word = _CN_NUM.get(len(modes))
+    assert word, f"GUI 模式数 {len(modes)} 不在映射表内，请扩展 _CN_NUM 并同步文档"
+    assert len(modes) == 4, (
+        f"GUI 识别模式已从 4 种变为 {len(modes)} 种："
+        "先同步 README / INSTALL / VERSION，再更新本断言"
+    )
+    for rel in ("README.md", "ocr_app/README.md", "INSTALL.zh-CN.md", "VERSION"):
+        text = _text(rel)
+        assert f"{word}种" in text, f"{rel} 未写明「{word}种」识别模式"
+        for stale in ("五种输出模式", "五种模式", "提供五种模式", "五种输出格式"):
+            assert stale not in text, f"{rel} 残留旧口径「{stale}」"
+        assert "html_table" in text, f"{rel} 未交代 html_table 的 GUI 边界"
+        assert not re.search(r"(?<!\d)\d{3}\s*项", text), (
+            f"{rel} 写死了测试数量，随用例增减必然过期，请改成「全量回归」"
+        )

@@ -66,7 +66,7 @@ Everything runs on your machine — no cloud, no uploads.
 
 ## 📂 目录结构
 
-> 以下按 `git ls-files` 逐条对账；`test_*.py` 表示 319 项测试，未逐一列出。
+> 以下按 `git ls-files` 逐条对账；`test_*.py` 为全量回归测试，未逐一列出。
 
 ```
 pic2edit/
@@ -225,9 +225,10 @@ Ollama / Transformers 的配置步骤见 [`ocr_app/README.md`](ocr_app/README.md
 
 ---
 
-## 📤 输出格式
+## 🎛 识别模式与导出格式
 
-GUI 主窗口工具栏的“输出格式”下拉提供五种模式（仅提示词与后续处理不同，底层采样参数一致）：
+GUI 主窗口工具栏的「**识别模式**」下拉提供四种模式（只影响提示词与后续处理，
+底层采样参数一致）。它决定的是「怎么识别」，不是「导出成什么文件」：
 
 | 选项 | 发送的提示词 | 说明 |
 | --- | --- | --- |
@@ -235,7 +236,12 @@ GUI 主窗口工具栏的“输出格式”下拉提供五种模式（仅提示�
 | 纯文本 OCR | `Free OCR.` | 无布局、纯文本 |
 | 图表·公式 | `Parse the figure.` | 解析图表 / 公式 |
 | 表格（键值→表） | `<|grounding|>Convert the document to markdown.` + 客户端 KV→表 | 真表格由模型原生输出 `\|` 表；对“键：值”标签版式，由 `kv_text_to_markdown_table` 做确定性后处理转成两列表 |
-| 表格（HTML/合并单元格） | `<|grounding|>Convert complex tables (e.g. invoices with merged cells) to HTML with rowspan/colspan.` | 让模型直接输出带 `rowspan`/`colspan` 的 HTML，适合带合并单元格的票面与报表；导出的 HTML 里表格按原行列结构渲染 |
+
+`html_table`（让模型输出带 `rowspan` / `colspan` 的 HTML）从未接通 GUI 链路，
+已从下拉移除；仅 CLI / skill 的 `--mode html_table` 保留。
+
+导出格式由导出时的文件扩展名决定：`.md / .txt / .docx / .html / .json` 五种，
+全部统一走 `export_by_ext()`；命中 schema 时 md/html/json 带溯源与字段化正文。
 
 ---
 
@@ -262,7 +268,7 @@ DeepSeek-OCR 在 llama.cpp 上的**原生模板会自动注入 media marker** �
 `.venv\Scripts\python.exe`）：
 
 ```bash
-# 1) 全量回归（319 项；无 GPU 也能跑完，conftest 预设 offscreen 且限制 OpenCV 线程）
+# 1) 全量回归（无 GPU 也能跑完，conftest 预设 offscreen 且限制 OpenCV 线程）
 ./.venv/bin/python -m pytest -q
 
 # 2) 静态检查（ruff 钉 0.17.4，避免新规则无端变红）
