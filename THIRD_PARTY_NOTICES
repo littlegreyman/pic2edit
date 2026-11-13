@@ -13,7 +13,8 @@ pic2edit 自身源码以 MIT License 发布（见根目录 LICENSE）。
 依 Apache-2.0 等许可证要求，此处集中保留其许可证与版权声明索引，便于合规分发与署名。
 版本下限以 `ocr_app/requirements.txt` 为准（该文件为每个下限标注了对应的 CVE）；
 `ocr_app/requirements.lock` 钉死开发态 / CI 的确切版本，`ocr_app/requirements_freeze.txt`
-是 PyInstaller 打包态（Python ≤3.12）的冻结清单。
+是 PyInstaller 打包态的冻结清单（跟随主 venv 的 Python 版本，当前 3.14；
+rapidocr>=3.10 起不再需要独立的 Python 3.12 OCR 子环境）。
 
 主程序依赖（ocr_app/requirements.txt）
 --------------------------------------
