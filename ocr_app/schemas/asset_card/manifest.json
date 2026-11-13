@@ -6,5 +6,10 @@
   "priority": 20,
   "schema": "schema.yaml",
   "layout": "layout.html",
-  "description": "声明式 schema 的完整示例：零 Python，只有这份 yaml 与一份 layout.html。字段依据《注册会计师审计数据规范 固定资产》（T/CICPA 0110—2026）固定资产卡片表的常见项取舍。"
+  "description": "声明式 schema 的完整示例：零 Python，只有这份 yaml 与一份 layout.html。字段依据《注册会计师审计数据规范 固定资产》（T/CICPA 0110—2026）固定资产卡片表的常见项取舍。",
+  "contract_version": 2,
+  "form": "declarative",
+  "layout_source": "package",
+  "standard": "standard.json",
+  "license": "MIT"
 }

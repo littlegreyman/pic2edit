@@ -1,0 +1,146 @@
+{
+  "standard": {
+    "code": "国家税务总局公告 2024 年第 11 号（票种差异参照）",
+    "title": "增值税发票（纸电票/旧版）字段字典",
+    "source_url": "https://www.chinatax.gov.cn/",
+    "license": "仅作字段取舍参考；公告与票样原文版权归发布方所有，未整份内嵌",
+    "note": "本包面向旧版纸电票。2024 年第 11 号公告推广的全面数字化电子发票删除发票代码、密码区、地址电话栏、银行账号栏，号码改为 20 位；数电票请使用独立包 invoice_digital。本文件只描述输出数据模型，定位策略见插件 extract.py。"
+  },
+  "fields": {
+    "header.invoice_code": {
+      "type": "string",
+      "required": false,
+      "label": "发票代码"
+    },
+    "header.invoice_number": {
+      "type": "string",
+      "required": false,
+      "label": "发票号码"
+    },
+    "header.issue_date": {
+      "type": "string",
+      "required": false,
+      "label": "开票日期"
+    },
+    "buyer.name": {
+      "type": "string",
+      "required": false,
+      "label": "购买方名称"
+    },
+    "buyer.tax_id": {
+      "type": "string",
+      "required": false,
+      "label": "购买方纳税人识别号"
+    },
+    "buyer.address_phone": {
+      "type": "string",
+      "required": false,
+      "label": "购买方地址电话"
+    },
+    "buyer.bank_account": {
+      "type": "string",
+      "required": false,
+      "label": "购买方开户行及账号"
+    },
+    "seller.name": {
+      "type": "string",
+      "required": false,
+      "label": "销售方名称"
+    },
+    "seller.tax_id": {
+      "type": "string",
+      "required": false,
+      "label": "销售方纳税人识别号"
+    },
+    "seller.address_phone": {
+      "type": "string",
+      "required": false,
+      "label": "销售方地址电话"
+    },
+    "seller.bank_account": {
+      "type": "string",
+      "required": false,
+      "label": "销售方开户行及账号"
+    },
+    "items[].name": {
+      "type": "string",
+      "required": false,
+      "label": "明细名称"
+    },
+    "items[].spec": {
+      "type": "string",
+      "required": false,
+      "label": "规格型号"
+    },
+    "items[].unit": {
+      "type": "string",
+      "required": false,
+      "label": "单位"
+    },
+    "items[].quantity": {
+      "type": "string",
+      "required": false,
+      "label": "数量"
+    },
+    "items[].unit_price": {
+      "type": "string",
+      "required": false,
+      "label": "单价"
+    },
+    "items[].amount": {
+      "type": "string",
+      "required": false,
+      "label": "金额"
+    },
+    "items[].tax_rate": {
+      "type": "string",
+      "required": false,
+      "label": "税率"
+    },
+    "items[].tax_amount": {
+      "type": "string",
+      "required": false,
+      "label": "税额"
+    },
+    "totals.total_excl_tax": {
+      "type": "string",
+      "required": false,
+      "label": "合计金额"
+    },
+    "totals.total_tax": {
+      "type": "string",
+      "required": false,
+      "label": "合计税额"
+    },
+    "total_incl_tax.capital": {
+      "type": "string",
+      "required": false,
+      "label": "价税合计（大写）"
+    },
+    "total_incl_tax.figures": {
+      "type": "string",
+      "required": false,
+      "label": "价税合计（小写）"
+    },
+    "remarks": {
+      "type": "string",
+      "required": false,
+      "label": "备注"
+    },
+    "signatures.payee": {
+      "type": "string",
+      "required": false,
+      "label": "收款人"
+    },
+    "signatures.reviewer": {
+      "type": "string",
+      "required": false,
+      "label": "复核"
+    },
+    "signatures.issuer": {
+      "type": "string",
+      "required": false,
+      "label": "开票人"
+    }
+  }
+}

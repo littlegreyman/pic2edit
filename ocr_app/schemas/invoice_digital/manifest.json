@@ -1,0 +1,17 @@
+{
+  "id": "invoice_digital",
+  "title": "全面数字化电子发票（数电票）",
+  "version": "1.0.0",
+  "kind": "builtin",
+  "contract_version": 2,
+  "form": "declarative",
+  "layout_source": "none",
+  "standard": "standard.json",
+  "license": "MIT",
+  "priority": 50,
+  "schema": "schema.yaml",
+  "ticket_types": [
+    "digital"
+  ],
+  "description": "数电票独立 schema id（用户决策 1）。priority=50 介于 asset_card=20 与 invoice=100 之间；detect 与 invoice 互斥：本包要求数电票票名 + 20 位号码，且排除「发票代码/密码区」。标准只有数据模型、没有版式，故 layout_source=none。"
+}

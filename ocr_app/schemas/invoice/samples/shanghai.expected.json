@@ -1,0 +1,17 @@
+{
+  "note": "脱敏真机上海普票。除核对正确字段外，另用两条 null 期望锁住 P1 修复：buyer.address 不得抽成「密码区」、明细不得多出「合」行。",
+  "fields": {
+    "header.invoice_type": "上海普通发票",
+    "header.invoice_no": "00000000",
+    "header.issue_date": "2023年06月02日",
+    "buyer.name": "示例采购科技有限公司",
+    "seller.name": "示例销售贸易有限公司",
+    "totals.total_excl_tax": "49.94",
+    "totals.total_tax": "6.49",
+    "total_incl_tax.figures": "56.43",
+    "signatures.payee": "张三",
+    "buyer.address": null,
+    "items[1].name": null
+  },
+  "skip": []
+}

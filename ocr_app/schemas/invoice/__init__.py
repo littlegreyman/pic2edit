@@ -18,6 +18,17 @@ from . import extract as _ex
 from . import html_layout as _html
 from . import render as _rd
 
+#: 数电票票名特征（决策 1）：出现即交给独立包 ``invoice_digital``。
+#: 数电票删除了发票代码/密码区/地址电话/银行账号栏、号码改 20 位，
+#: 套用本包 27 字段的旧版纸电票模型必然抽错。两包 detect 必须互斥，
+#: 否则 auto 模式下恒真的 invoice 会把数电票全部抢走。
+_DIGITAL_MARKERS = (
+    "电子发票（普通发票）",
+    "电子发票（增值税专用发票）",
+    "全面数字化电子发票",
+    "数电票",
+)
+
 
 class InvoiceProvider:
     """发票 schema 提供者。"""
@@ -26,8 +37,9 @@ class InvoiceProvider:
     title = "增值税发票"
     version = "1.0.0"
     kind = "builtin"
-    #: detect 恒真：票种判定本身依赖明细表/密码区的坐标证据，
-    #: 只能在 extract 里做。因此 priority 取大值，让它最后被尝试。
+    #: 票种判定本身依赖明细表/密码区的坐标证据，只能在 extract 里做，
+    #: 因此 priority 取大值让它最后被尝试。detect 不再恒真：显式排除数电票
+    #: 票名，把那一类交给 priority=50 的 invoice_digital（见 _DIGITAL_MARKERS）。
     priority = 100
     #: 不声明 layout：``layout`` 是**声明式** schema 的 HTML 版式文件，
     #: 而发票的票面 HTML 由 ``render_html()`` 现算（html_layout.py 是代码不是模板）。
@@ -39,8 +51,10 @@ class InvoiceProvider:
 
     # ---------- 判定 / 抽取 ----------
     def detect(self, text: str, lines, width: int, height: int) -> bool:
-        # 恒真：把"像不像发票"交给 extract 用版面证据判定（保持 Phase 3 之前的行为）。
-        return True
+        # 只做「票种互斥」这一件事：数电票交给独立包，其余仍交给 extract
+        # 用版面证据判定（保持「不靠关键词猜票种」的既有行为）。
+        body = text or ""
+        return not any(marker in body for marker in _DIGITAL_MARKERS)
 
     def extract(self, text: str, lines, width: int, height: int) -> Optional[Dict[str, Any]]:
         return _ex.extract_invoice(text, lines, width, height)

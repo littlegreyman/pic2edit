@@ -370,9 +370,9 @@ GUI 填充时按白名单过滤，避免「删了下拉、后端字典也跟着�
 | Phase | 状态 | 验证 |
 |---|---|---|
 | P0 统一导出入口 | ✅ `61358a8` | 全量 323 passed ×2、ruff 绿；GUI 5 种格式与 `export_by_ext` 逐格式对账 |
-| P1 抽取正确性与模式路由 | ✅ 本 commit | 全量 330 passed ×2、ruff 绿；脱敏上海票端到端 md 1445B 含 `<!-- schema: invoice@1.0.0 -->`、无「密码区」/「合」错值 |
-| P2 包结构契约 v2 | ✅ 本 commit | 全量 345 passed ×2、ruff 绿；规格升 v1.2、lint/cli/emit 落地、15 项门禁（含 6 个缺件负例真跑） |
-| P3 内置包补齐 | ⏳ 待做 | 含决策 1：**独立 `invoice_digital` 包**，与 `invoice` 的 detect 必须互斥 |
+| P1 抽取正确性与模式路由 | ✅ `eff6317` | 全量 330 passed ×2、ruff 绿；脱敏上海票端到端 md 1445B 含 `<!-- schema: invoice@1.0.0 -->`、无「密码区」/「合」错值 |
+| P2 包结构契约 v2 | ✅ `cd5a1f7` | 全量 345 passed ×2、ruff 绿；规格升 v1.2、lint/cli/emit 落地、15 项门禁（含 6 个缺件负例真跑） |
+| P3 内置包补齐 | ✅ 本 commit | 三包全量升级 v2 + 独立 `invoice_digital`（detect 互斥、priority 20<50<100）；16 项门禁，auto 三路由互斥真跑，4 份 golden 全部匹配，三包 `pack` 均成功且 zip 内五件套齐全；全量 361 passed、ruff 绿 |
 | P4 真机验收与发布收口 | ⏳ 待做 | 用户原生桌面；CI 在 HEAD 上绿；版本位与说明文档对账 |
 
 P1 落地要点（与 §4 的差异说明）：
@@ -415,3 +415,28 @@ P2 落地要点（与 §3.2 / §4 的差异说明，已同步进规格 v1.2 的 
 - **CLI 真跑**：`new → validate（无问题）→ test（命中率 100%，golden 匹配 1）
   → pack（8 文件，sha256 打印）` 全绿；生成器 `verify()` 结构层与 auto 不误命中
   门禁全过，效果层仍诚实标注「未验证」（`gated=False`）。
+
+P3 落地要点（与 §5 的差异说明）：
+- 三包均声明 `contract_version: 2`；`form` 为 `plugin` / `declarative` /
+  `declarative`，`layout_source` 为 `package` / `none` / `package`。数电票按
+  `layout_source: none` **不编造 HTML 版式**（标准只定义数据模型，无版式）。
+- 数电票独立 id 后 `invoice.detect` 不再恒真：显式排除四个数电票票名；
+  `invoice_digital.detect` 要求票名 + 20 位号码 + 排除「发票代码/密码区」。
+  `test_detect_rules_are_mutually_exclusive` 直接对两个 provider 取反例，
+  不靠 priority 侥幸正确。
+- 插件式包首次带 `samples/`，暴露并修复三处既有缺陷：① `check_samples()`
+  原直接 `runtime.build_provider()`（只认 schema.yaml），改走注册表
+  `_provider_for()`；② 恒传 `width=height=0` 让发票几何抽取拿不到 seller/items，
+  改为 `.lines.json` 支持对象形式带 `img_w/img_h`；③ golden 的 `null` 期望
+  在路径不存在时算通过，用于锁住 P1 两处错抽回归。
+- **顺带修一处「日志说假话」**：`check_samples()` 原恒取 `doc.get("flat")`
+  计字段数，插件式发票明明抽出 47 个展平叶字段却打印「字段 0 个」，与同一次
+  golden「匹配 11」自相矛盾。现按 doc 形状分别计数并输出 `fields_kind`，
+  CLI 标注「叶字段（doc 展平）」；规格 §3.8 与门禁
+  `test_sample_field_counts_match_doc_shape` 已同步。
+- **真跑证据**：`cli list` 三包 priority 20/50/100；`validate --samples` 三包
+  无问题、命中率 100%；`cli test` 4 份样张 golden 零不符零缺失；
+  `pack` 三包 zip 分别 10/6/9 文件、五件套齐全。
+- **环境噪声（非本次改动引入）**：本沙箱 PySide6 offscreen 在解释器析构阶段
+  偶发 SIGSEGV，5 次全量连跑中 1 次「361 passed 但退出码 139」，其余 4 次
+  exit=0；测试本身零失败。详见长期记忆，不影响真机与远端 CI。

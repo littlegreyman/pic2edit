@@ -6,17 +6,50 @@
   "entry": "__init__.py",
   "priority": 100,
   "detect": {
-    "keywords": ["增值税", "发票", "价税合计", "纳税人识别号"],
+    "keywords": [
+      "增值税",
+      "发票",
+      "价税合计",
+      "纳税人识别号"
+    ],
     "note": "detect 恒真，票种判定在 extract 内依据版面证据完成"
   },
   "fields": [
-    "header.invoice_code", "header.invoice_number", "header.issue_date",
-    "buyer.name", "buyer.tax_id", "buyer.address_phone", "buyer.bank_account",
-    "seller.name", "seller.tax_id", "seller.address_phone", "seller.bank_account",
-    "items[].name", "items[].spec", "items[].unit", "items[].quantity",
-    "items[].unit_price", "items[].amount", "items[].tax_rate", "items[].tax_amount",
-    "totals.total_excl_tax", "totals.total_tax",
-    "total_incl_tax.capital", "total_incl_tax.figures",
-    "remarks", "signatures.payee", "signatures.reviewer", "signatures.issuer"
-  ]
+    "header.invoice_code",
+    "header.invoice_number",
+    "header.issue_date",
+    "buyer.name",
+    "buyer.tax_id",
+    "buyer.address_phone",
+    "buyer.bank_account",
+    "seller.name",
+    "seller.tax_id",
+    "seller.address_phone",
+    "seller.bank_account",
+    "items[].name",
+    "items[].spec",
+    "items[].unit",
+    "items[].quantity",
+    "items[].unit_price",
+    "items[].amount",
+    "items[].tax_rate",
+    "items[].tax_amount",
+    "totals.total_excl_tax",
+    "totals.total_tax",
+    "total_incl_tax.capital",
+    "total_incl_tax.figures",
+    "remarks",
+    "signatures.payee",
+    "signatures.reviewer",
+    "signatures.issuer"
+  ],
+  "contract_version": 2,
+  "form": "plugin",
+  "layout_source": "package",
+  "standard": "standard.json",
+  "license": "MIT",
+  "ticket_types": [
+    "paper_electronic"
+  ],
+  "description": "旧版纸电票（含发票代码/密码区/地址电话/银行账号栏）。数电票请用 invoice_digital 包；两包 detect 互斥。"
 }

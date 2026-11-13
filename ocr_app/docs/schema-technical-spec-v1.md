@@ -362,10 +362,15 @@ lint：`key` 重复 / 与段名同名 / 未知 anchor / 正则编译失败 → `
 | 文件 | 格式 | 说明 |
 |---|---|---|
 | `<name>.txt` | UTF-8 纯文本 | 该票种的**识别文本**（不是图片）；`check_samples` 直接喂 `extract()` |
-| `<name>.lines.json` | JSON 数组 | 可选；每行框 `{"text","x0","y0","x1","y1"}`，用于测坐标锚点与表格聚行 |
+| `<name>.lines.json` | JSON 数组**或对象** | 可选；数组形式每行框 `{"text","x0","y0","x1","y1"}`。插件式包做几何抽取还**需要图幅尺寸**，可写成对象 `{"lines": [...], "img_w": N, "img_h": M}`，`check_samples` 会把尺寸传给 `extract()`；纯数组是兼容形式（尺寸 0） |
 
 `check_samples()` 返回 `{samples, with_samples, hit_rate, results[]}`，每项
-`{sample, hit, fields, tables}`；`schemas.cli test --min-rate`（默认 **0.8**）据此判通过。
+`{sample, hit, fields, fields_kind, tables}`；`schemas.cli test --min-rate`（默认 **0.8**）据此判通过。
+`fields` 的口径 **MUST** 与 `extract()` 返回的 doc 形状一致：声明式取 `doc.flat`
+的字段数（`fields_kind="flat"`），插件式取 `_flatten_doc(doc)` 的展平叶字段数
+（`fields_kind="flattened"`），未命中为 `0` / `"none"`。CLI **MUST** 按 `fields_kind`
+标注口径、不得把两类字段数混称，更不得在明明抽到字段时打印「字段 0 个」
+（2026-11-13 真跑发现：插件式发票曾打印 0 字段，同一次运行 golden 却报匹配 11 项）。
 **SHOULD** ≥3 份样张，覆盖正常 / 缺字段 / 不同版式。生成器 **MUST** 至少产出一份可命中样张（§6.6）。
 
 ### 3.8.1 期望输出样例（v2 MUST）
@@ -388,7 +393,8 @@ lint：`key` 重复 / 与段名同名 / 未知 anchor / 正则编译失败 → `
 
 1. 先把 `extract()` 返回的 `doc` 递归展平成点路径 + `[i]` 索引（`dict` 用 `.`，`list` 用 `[i]`）；
 2. 声明式 `doc.flat` 同时提供**不带 `flat.` 前缀**的裸键别名，两种写法都合法；
-3. 值统一按 `str` 比较；`null` 期望表示「该字段应为空」。
+3. 值统一按 `str` 比较；`null` 期望表示「该字段应为空」——路径不存在
+   或值为空都算符合，用于锁住 `buyer.address="密码区"` 这类回归。
 
 `check_samples()` 对每份样张附一份 `golden` 报告
 `{expected, matched, mismatched[], missing[], skipped[]}`，`schemas.cli test` 打印它。

@@ -1,0 +1,16 @@
+{
+  "note": "合成骨架样张：验证 20 位号码、双方名称/税号与三项金额能抽到",
+  "fields": {
+    "flat.invoice_number": "24312000000012345678",
+    "flat.issue_date": "2026年11月13日",
+    "flat.buyer_name": "示例采购有限公司",
+    "flat.buyer_tax_id": "91310000MA1FL0000X",
+    "flat.seller_name": "示例销售有限公司",
+    "flat.seller_tax_id": "91310000MA1FL0001Y",
+    "flat.total_excl_tax": "1000.00",
+    "flat.total_tax": "130.00",
+    "flat.total_incl_tax": "1130.00",
+    "flat.remarks": "合成骨架样张，非真实票面"
+  },
+  "skip": []
+}

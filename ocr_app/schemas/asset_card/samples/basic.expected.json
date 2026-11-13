@@ -1,0 +1,21 @@
+{
+  "note": "basic.txt 多栏样张的 flat 字段逐项对账",
+  "fields": {
+    "flat.card_no": "AC-2026-0001",
+    "flat.asset_no": "ZC-000123",
+    "flat.name": "数控车床",
+    "flat.category": "机器设备",
+    "flat.spec": "CK6140",
+    "flat.use_dept": "生产一部",
+    "flat.location": "一号车间",
+    "flat.start_date": "2024-03-15",
+    "flat.original_cost": "286000.00",
+    "flat.net_value": "241150.00",
+    "flat.depreciation_method": "年限平均法",
+    "flat.useful_life": "10年",
+    "flat.residual_rate": "5%"
+  },
+  "skip": [
+    "flat.remarks"
+  ]
+}

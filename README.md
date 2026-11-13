@@ -35,6 +35,9 @@ Everything runs on your machine — no cloud, no uploads.
   （内置 → `$PIC2EDIT_SCHEMA_DIR` → `~/.pic2edit/schemas`，同名覆盖），
   **新增一种凭证 = 写一个目录，不改一行转换代码**；
   `python -m schemas.cli` 提供 `list / validate / test / new / pack`。
+  内置三个包：`invoice`（旧版纸电票，插件式）、`invoice_digital`（数电票，独立 id）、
+  `asset_card`（声明式）；均满足 v2 五件套（README / standard.json / 输入输出样例），
+  契约见 `ocr_app/docs/schema-technical-spec-v1.md` §3.1.1。
 - **忠实版式导出**：命中 schema 走其版式；未命中时用「原图垫底 + 按 OCR 坐标叠透明
   文字层」（可搜索 PDF 的做法），不再用 HTML 重排版面冒充原件；三档降级，
   导出 HTML 与 GUI 预览统一过白名单清洗。
@@ -42,8 +45,11 @@ Everything runs on your machine — no cloud, no uploads.
   定位策略待补」的声明式骨架包。标准只描述数据模型、不含票面坐标与版式，
   因此生成器**不假装产出可直接上线的抽取规则**（详见
   [`ocr_app/docs/schema-technical-spec-v1.md`](ocr_app/docs/schema-technical-spec-v1.md)）。
-- **五种输出模式**：Markdown（默认） / 纯文本 OCR / 图表·公式 / 表格（键值→表） /
-  表格（HTML，合并单元格）；导出文件支持 `.md / .txt / .docx / .html / .json`。
+- **四种 GUI 识别模式**：Markdown（默认） / 纯文本 OCR / 图表·公式 /
+  表格（键值→表）。`html_table`（HTML/合并单元格）未接通 GUI 链路，已从下拉移除，
+  仅 CLI / skill 的 `--mode html_table` 保留。导出文件支持
+  `.md / .txt / .docx / .html / .json`，五个分支统一走 `export_by_ext()`，
+  命中 schema 时 md/html/json 均带溯源、字段化正文一致。
 - **三后端可切换**：
   - **llama.cpp（默认、最轻量）**：官方预编译 `llama-server` + 量化 GGUF（Q4_K_M 约 2GB，最省显存，适配 8GB 显卡）。
   - **Ollama（可选）**：`ollama pull deepseek-ocr` 后用本机 Ollama 推理（需注意官方模型为 6.7GB F16）。
@@ -100,8 +106,9 @@ pic2edit/
     ├── backends/               # 三后端 + 判别式 / 路由 / 流水线 / 引擎诊断（13 模块）
     │   └── routing.py / ocr_pipeline.py / engine_boot.py
     ├── schemas/                # ★ 凭证 schema 子系统（drop-in 包 + runtime/lint/cli）
-    │   ├── asset_card/         #   声明式参考实现（manifest.json + schema.yaml + layout.html）
-    │   ├── invoice/            #   插件式（extract.py / render.py / html_layout.py）
+    │   ├── asset_card/         #   声明式 v2 包（含 README / standard.json / samples）
+    │   ├── invoice/            #   插件式 v2 包（extract.py / render.py / html_layout.py）
+    │   ├── invoice_digital/    #   数电票独立 id（声明式，detect 与 invoice 互斥）
     │   └── runtime.py / lint.py / cli.py / registry.py
     ├── schema_gen/             # ★ 国标 XSD → schema 骨架包生成器
     │   ├── README.md

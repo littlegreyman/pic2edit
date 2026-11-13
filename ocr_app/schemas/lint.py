@@ -433,6 +433,28 @@ def lint_package(pkg_dir: str) -> Dict[str, Any]:
     return {"ok": ok, "issues": issues, "pkg": pkg_dir, "id": mid}
 
 
+def _provider_for(pkg_dir: str, manifest: Dict[str, Any]):
+    """取 provider：插件式 MUST 走注册表，声明式可本地构建。
+
+    ``runtime.build_provider()`` 只认 ``schema.yaml``，对 ``entry`` 插件包会抛
+    FileNotFoundError。此前内置 invoice 没有 samples/，这个分支从未被走到；
+    v2 五件套给插件式包补了样张后才暴露。注册表是**唯一**能同时装载两种档位
+    的入口（相对 import 的内置子包只能按包名导入），这里不复制第二份加载逻辑。
+    """
+    mid = manifest.get("id")
+    if mid:
+        try:
+            from . import get_registry
+
+            prov = get_registry().get(mid)
+            pdir = getattr(prov, "package_dir", "") or getattr(prov, "pkg_dir", "")
+            if prov is not None and pdir and                     os.path.realpath(pdir) == os.path.realpath(pkg_dir):
+                return prov
+        except Exception:
+            pass  # 注册表扫不到（如临时目录里的新包）→ 回退本地构建
+    return runtime.build_provider(pkg_dir, manifest)
+
+
 def check_samples(pkg_dir: str, manifest: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """用 ``samples/`` 里的样张跑一遍抽取，报命中率与字段召回。
 
@@ -446,7 +468,7 @@ def check_samples(pkg_dir: str, manifest: Optional[Dict[str, Any]] = None) -> Di
         with open(mp, encoding="utf-8") as f:
             manifest = json.load(f)
     try:
-        provider = runtime.build_provider(pkg_dir, manifest)
+        provider = _provider_for(pkg_dir, manifest)
     except Exception as e:
         return {"samples": 0, "error": str(e)}
 
@@ -459,15 +481,38 @@ def check_samples(pkg_dir: str, manifest: Optional[Dict[str, Any]] = None) -> Di
         with open(os.path.join(samp_dir, name), encoding="utf-8") as f:
             text = f.read()
         lines: Sequence[Dict[str, Any]] = []
+        width = height = 0
         lp = os.path.join(samp_dir, name[:-4] + ".lines.json")
         if os.path.isfile(lp):
             with open(lp, encoding="utf-8") as f:
-                lines = json.load(f) or []
-        doc = provider.extract(text, lines, 0, 0)
+                raw = json.load(f) or []
+            if isinstance(raw, dict):
+                # 插件式抽取（发票）依赖图幅尺寸做几何判定。允许 .lines.json
+                # 写成 {"lines": [...], "img_w": N, "img_h": M}；纯数组是兼容形式，
+                # 尺寸仍为 0（声明式的文本路径不需要尺寸）。
+                lines = raw.get("lines") or []
+                width = int(raw.get("img_w") or 0)
+                height = int(raw.get("img_h") or 0)
+            else:
+                lines = raw
+        doc = provider.extract(text, lines, width, height)
+        # 字段数必须说真话：声明式 doc 有 ``flat`` 字典，插件式 doc 是自由
+        # dict（发票是 buyer/seller/items/...）。旧写法恒取 ``doc.get("flat")``，
+        # 插件式明明抽出了字段却打印「字段 0 个」，与同一次运行的 golden
+        # 「匹配 11」自相矛盾。两类文档各自按自己的真实口径计数，并把口径
+        # 写进 ``fields_kind`` 让 CLI 能如实标注，不混称。
+        dflat = doc.get("flat") if isinstance(doc, dict) else None
+        if isinstance(dflat, dict):
+            n_fields, fields_kind = len(dflat), "flat"
+        elif doc:
+            n_fields, fields_kind = len(_flatten_doc(doc)), "flattened"
+        else:
+            n_fields, fields_kind = 0, "none"
         row: Dict[str, Any] = {
             "sample": name,
             "hit": bool(doc),
-            "fields": len(doc.get("flat", {})) if doc else 0,
+            "fields": n_fields,
+            "fields_kind": fields_kind,
             "tables": {k: len(v) for k, v in (doc or {}).get("tables", {}).items()},
         }
         # 逐字段对账是 **report**：只打印差异，不进 issues、不影响 ok / 退出码。
@@ -488,7 +533,11 @@ def check_samples(pkg_dir: str, manifest: Optional[Dict[str, Any]] = None) -> Di
                         continue
                     found, got = _expected_lookup(doc, path)
                     want_s, got_s = _as_text(want), _as_text(got)
-                    if not found:
+                    if not found and want_s is None:
+                        # 期望「抽不到」：路径不存在正是正确行为（用于锁住
+                        # buyer.address="密码区" / 「合」行混入明细这类回归）。
+                        report["matched"] += 1
+                    elif not found:
                         report["missing"].append({"field": path, "expected": want})
                     elif want_s == got_s:
                         report["matched"] += 1

@@ -210,6 +210,13 @@ def _print_issues(res: Dict[str, Any]) -> None:
         print(f"  [{mark}] {i['where']}: {i['message']}")
 
 
+def _fields_label(row: Dict[str, Any]) -> str:
+    """字段数的口径标签：插件式 doc 数的是展平叶字段，不能混称 ``flat``。"""
+    if row.get("fields_kind") == "flattened":
+        return "叶字段（doc 展平）"
+    return "字段"
+
+
 def cmd_list(args) -> int:
     items = list_schemas()
     if not items:
@@ -246,7 +253,8 @@ def cmd_validate(args) -> int:
             print(f"  样张 {s['samples']} 份，命中率 {s['hit_rate']:.0%}")
             for r in s.get("results") or []:
                 flag = "命中" if r["hit"] else "未命中"
-                print(f"    {r['sample']}: {flag}，字段 {r['fields']} 个，表格 {r['tables']}")
+                print(f"    {r['sample']}: {flag}，{_fields_label(r)} {r['fields']} 个，"
+                      f"表格 {r['tables']}")
     return 0 if res["ok"] else 1
 
 
@@ -265,7 +273,7 @@ def cmd_test(args) -> int:
     print(f"{s['samples']} 份样张，命中率 {s['hit_rate']:.0%}")
     for r in s.get("results") or []:
         print(f"  {r['sample']}: {'命中' if r['hit'] else '未命中'}，"
-              f"字段 {r['fields']} 个，表格 {r['tables']}")
+              f"{_fields_label(r)} {r['fields']} 个，表格 {r['tables']}")
         # golden 逐字段对账：只报告差异，不影响 ok / 退出码（规格 §6.6 既定口径）。
         g = r.get("golden")
         if isinstance(g, dict) and "error" not in g:

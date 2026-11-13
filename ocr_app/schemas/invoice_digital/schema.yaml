@@ -1,0 +1,80 @@
+# 全面数字化电子发票（数电票）—— 独立 schema id，与 invoice 互斥
+#
+# 票种差异（国家税务总局公告 2024 年第 11 号）：数电票删除发票代码、密码区、
+# 地址电话栏、银行账号栏，发票号码改为 20 位。因此本包**不复用** invoice 的
+# 27 字段插件模型（那正是 P1 修过的「密码区当地址」的根因），而用独立数据模型。
+#
+# 本包是声明式：零自定义 Python，由 runtime.py 通用引擎驱动。
+# 只覆盖票面基本字段；明细表与真实票面差异需在拿到真机样张后补齐（见 README）。
+id: invoice_digital
+title: 全面数字化电子发票（数电票）
+version: 1.0.0
+priority: 50
+strict: false
+
+detect:
+  any:
+    - 电子发票（普通发票）
+    - 电子发票（增值税专用发票）
+    - 全面数字化电子发票
+    - 数电票
+  all:
+    - 发票号码
+  none:
+    - 发票代码
+    - 密码区
+  regex:
+    - '\d{20}'
+
+sections:
+  - key: header
+    label: 一、票面基本信息
+    mode: kv
+    fields:
+      - key: invoice_number
+        label: 发票号码
+        regex: '发票号码[：:\s]*(\d{20})'
+        anchor: right
+        required: true
+      - key: issue_date
+        label: 开票日期
+        regex: '开票日期[：:\s]*(\d{4}年\d{1,2}月\d{1,2}日)'
+        anchor: right
+      - key: buyer_name
+        label: 购买方名称
+        regex: '购买方名称[：:\s]*([^\n]+)'
+        anchor: right
+      - key: buyer_tax_id
+        label: 购买方统一社会信用代码
+        regex: '购买方统一社会信用代码[：:\s]*([0-9A-Z]{18})'
+        anchor: right
+      - key: seller_name
+        label: 销售方名称
+        regex: '销售方名称[：:\s]*([^\n]+)'
+        anchor: right
+      - key: seller_tax_id
+        label: 销售方统一社会信用代码
+        regex: '销售方统一社会信用代码[：:\s]*([0-9A-Z]{18})'
+        anchor: right
+
+  - key: totals
+    label: 二、金额
+    mode: kv
+    fields:
+      - key: total_excl_tax
+        label: 合计金额
+        regex: '合计金额[：:\s]*([\d,.]+)'
+        anchor: right
+      - key: total_tax
+        label: 合计税额
+        regex: '合计税额[：:\s]*([\d,.]+)'
+        anchor: right
+      - key: total_incl_tax
+        label: 价税合计
+        regex: '价税合计[：:\s]*([\d,.]+)'
+        anchor: right
+
+  - key: remarks
+    label: 三、备注
+    mode: text
+    regex: '备注[：:]\s*(.+)'

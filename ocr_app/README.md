@@ -62,8 +62,9 @@ ocr_app/
 │   └── server_launcher.py / mask.py
 ├── schemas/                     # ★ 凭证 schema 子系统
 │   ├── README.md / base.py / registry.py / runtime.py / lint.py / cli.py
-│   ├── asset_card/              #   声明式：manifest.json + schema.yaml + layout.html
-│   └── invoice/                 #   插件式：extract.py / render.py / html_layout.py
+│   ├── asset_card/              #   声明式 v2 包：manifest / schema.yaml / layout.html / README / standard / samples
+│   ├── invoice/                 #   插件式 v2 包：extract.py / render.py / html_layout.py + v2 五件套
+│   └── invoice_digital/         #   数电票独立 id（声明式，与 invoice 的 detect 互斥）
 ├── schema_gen/                  # ★ 国标 XSD → schema 骨架包生成器
 │   ├── README.md / __main__.py
 │   └── sources.py / readers.py / ir.py / emit.py / verify.py / cli.py

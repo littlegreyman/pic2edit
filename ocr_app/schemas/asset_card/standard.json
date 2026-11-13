@@ -1,0 +1,101 @@
+{
+  "standard": {
+    "code": "T/CICPA 0110—2026",
+    "title": "注册会计师审计数据规范 固定资产（固定资产卡片表常用项）",
+    "source_url": "",
+    "license": "字段取舍参考；标准全文不内嵌，原文版权归发布方所有",
+    "note": "本文件只描述输出数据模型，不含坐标、正则与版式；定位策略见 schema.yaml，版式见 layout.html。刻意只保留票面上真实能看见的字段。"
+  },
+  "fields": {
+    "card_no": {
+      "type": "string",
+      "required": false,
+      "label": "卡片编号"
+    },
+    "asset_no": {
+      "type": "string",
+      "required": false,
+      "label": "资产编号"
+    },
+    "name": {
+      "type": "string",
+      "required": false,
+      "label": "资产名称"
+    },
+    "category": {
+      "type": "string",
+      "required": false,
+      "label": "资产类别"
+    },
+    "spec": {
+      "type": "string",
+      "required": false,
+      "label": "规格型号"
+    },
+    "use_dept": {
+      "type": "string",
+      "required": false,
+      "label": "使用部门"
+    },
+    "location": {
+      "type": "string",
+      "required": false,
+      "label": "存放地点"
+    },
+    "start_date": {
+      "type": "string",
+      "required": false,
+      "label": "开始使用日期"
+    },
+    "original_cost": {
+      "type": "string",
+      "required": false,
+      "label": "原值"
+    },
+    "net_value": {
+      "type": "string",
+      "required": false,
+      "label": "净值"
+    },
+    "depreciation_method": {
+      "type": "string",
+      "required": false,
+      "label": "折旧方法"
+    },
+    "useful_life": {
+      "type": "string",
+      "required": false,
+      "label": "预计使用年限"
+    },
+    "residual_rate": {
+      "type": "string",
+      "required": false,
+      "label": "残值率"
+    },
+    "period": {
+      "type": "string",
+      "required": false,
+      "label": "期间"
+    },
+    "months": {
+      "type": "string",
+      "required": false,
+      "label": "月数"
+    },
+    "amount": {
+      "type": "string",
+      "required": false,
+      "label": "本期折旧"
+    },
+    "accumulated": {
+      "type": "string",
+      "required": false,
+      "label": "累计折旧"
+    },
+    "remarks": {
+      "type": "string",
+      "required": false,
+      "label": "备注"
+    }
+  }
+}
