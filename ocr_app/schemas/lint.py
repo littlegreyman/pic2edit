@@ -18,6 +18,11 @@
 
 另有一项 ``check_samples()``：把 ``samples/`` 里的样张文本跑一遍抽取，
 报命中率与字段召回。它是新 schema 上线前唯一能提前发现"抽歪了"的手段。
+
+v1.2 新增 ``_lint_v2_contract()``：只对显式声明 ``contract_version: 2`` 的包
+强制执行「五件套」检查（README / standard.json / 字段对账 / 版式来源 / golden
+样例）。存量包不声明就按 v1 规则走，只给一条 info —— 这样契约可分阶段纳管，
+不会把仓库里所有历史包一次性判红。详见规格 §3.1.1 / §3.13.1。
 """
 from __future__ import annotations
 
@@ -32,9 +37,205 @@ from . import runtime
 _MODES = runtime.SECTION_MODES
 _ANCHORS = runtime.ANCHORS
 
+#: v2 包契约（规格 §3.1.1 / §3.3.1）。只有显式声明 contract_version: 2 的包
+#: 才受这些 MUST 约束；未声明 = v1 兼容，见 D4 渐进纳管。
+CONTRACT_VERSION = 2
+FORM_VALUES = ("declarative", "plugin")
+LAYOUT_SOURCES = ("package", "generic", "none")
+README_SECTIONS = (
+    "功能与适用范围",
+    "使用方法",
+    "主要特点与已知边界",
+    "字段来源与标准编号",
+    "版本与变更记录",
+    "版权与许可",
+)
+
 
 def _err(out: List[Dict[str, str]], level: str, where: str, msg: str) -> None:
     out.append({"level": level, "where": where, "message": msg})
+
+
+def _flatten_doc(obj: Any, prefix: str = "") -> Dict[str, Any]:
+    """把 ``extract()`` 返回的 doc 递归展平成点路径 + ``[i]`` 索引（唯一入口）。
+
+    声明式 doc 形如 ``{type, version, sections, flat, tables, missing}``；
+    插件式 doc 是自由 dict（发票是 ``{buyer, seller, items, totals, ...}``）。
+    两种形状都要能写进 ``expected.json`` 的 ``fields`` 路径里，故统一展平。
+    """
+    out: Dict[str, Any] = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            key = f"{prefix}.{k}" if prefix else str(k)
+            out.update(_flatten_doc(v, key))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            key = f"{prefix}[{i}]"
+            out.update(_flatten_doc(v, key))
+    elif prefix:
+        out[prefix] = obj
+    return out
+
+
+def _expected_lookup(doc: Optional[Dict[str, Any]], path: str):
+    """返回 ``(found, value)``；声明式 ``doc.flat`` 额外支持不带前缀的裸键。"""
+    if not isinstance(doc, dict):
+        return False, None
+    flat = _flatten_doc(doc)
+    if path in flat:
+        return True, flat[path]
+    dflat = doc.get("flat")
+    if isinstance(dflat, dict) and path in dflat:
+        return True, dflat[path]
+    return False, None
+
+
+def _as_text(value: Any) -> Optional[str]:
+    """golden 比较统一按字符串；``None`` 与空串都视为「抽不到」。"""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    text = str(value)
+    return text or None
+
+
+def _implemented_keys(manifest: Dict[str, Any], spec: Optional[Dict[str, Any]]) -> Set[str]:
+    """实现里实际会产出的字段 key：声明式从 yaml 取，插件式从 manifest.fields 取。"""
+    if manifest.get("entry"):
+        return {str(k) for k in (manifest.get("fields") or []) if k}
+    keys: Set[str] = set()
+    for sec in (spec or {}).get("sections") or []:
+        mode = (sec.get("mode") or "kv").lower()
+        if mode == "table":
+            for c in sec.get("columns") or []:
+                if c.get("key"):
+                    keys.add(str(c["key"]))
+        elif mode == "text":
+            if sec.get("key"):
+                keys.add(str(sec["key"]))
+        else:
+            for f in sec.get("fields") or []:
+                if f.get("key"):
+                    keys.add(str(f["key"]))
+    return keys
+
+
+def _lint_v2_contract(pkg_dir: str, manifest: Dict[str, Any],
+                      issues: List[Dict[str, str]]) -> Dict[str, Any]:
+    """检查 v2 五件套。返回 ``{"v2": bool, "standard": ..., "spec": ...}`` 供复用。
+
+    刻意**不抛异常**：任何坏文件都转成一条 error，让 ``validate`` / ``pack``
+    能一次报全所有缺口，而不是修一个报一个。
+    """
+    if manifest.get("contract_version") != CONTRACT_VERSION:
+        _err(issues, "info", "manifest.json",
+             "未声明 contract_version: 2，按 v1 规则检查；建议补齐 v2 五件套（规格 §3.1.1）")
+        return {"v2": False}
+
+    # ---- ① README 六个固定章节 ----
+    rp = os.path.join(pkg_dir, "README.md")
+    if not os.path.isfile(rp):
+        _err(issues, "error", "README.md", "v2 包缺少 README.md")
+    else:
+        with open(rp, encoding="utf-8") as f:
+            readme = f.read()
+        for sec in README_SECTIONS:
+            if sec not in readme:
+                _err(issues, "error", "README.md", f"缺少固定章节：{sec}")
+
+    # ---- ② standard.json：字段字典 + 标准来源 ----
+    std_name = manifest.get("standard") or "standard.json"
+    std_path = os.path.join(pkg_dir, std_name)
+    standard: Dict[str, Any] = {}
+    if not os.path.isfile(std_path):
+        _err(issues, "error", std_name, "v2 包缺少数据规范 standard.json")
+    else:
+        try:
+            with open(std_path, encoding="utf-8") as f:
+                standard = json.load(f)
+            if not isinstance(standard, dict) or not isinstance(standard.get("fields"), dict):
+                _err(issues, "error", std_name, "standard.json 需含 fields 字典")
+                standard = {}
+            else:
+                meta = standard.get("standard") or {}
+                for k in ("code", "license"):
+                    if not meta.get(k):
+                        _err(issues, "warning", std_name,
+                             f"standard.{k} 未声明（标准编号 / 引用许可）")
+        except Exception as e:
+            _err(issues, "error", std_name, f"解析失败: {e}")
+            standard = {}
+
+    # ---- ③ form / layout_source ----
+    form = manifest.get("form")
+    if form not in FORM_VALUES:
+        _err(issues, "error", "manifest.json",
+             f"form 必须是 {'/'.join(FORM_VALUES)}（不得复用 kind），实得 {form!r}")
+    src = manifest.get("layout_source")
+    if src not in LAYOUT_SOURCES:
+        _err(issues, "error", "manifest.json",
+             f"layout_source 必须是 {'/'.join(LAYOUT_SOURCES)}，实得 {src!r}")
+    else:
+        layout = manifest.get("layout")
+        if src in ("generic", "none") and layout:
+            _err(issues, "error", "manifest.json",
+                 f"layout_source={src} 时 MUST NOT 声明 layout 版式文件")
+        if src == "package" and form == "declarative":
+            f = layout or ("layout.html" if os.path.isfile(
+                os.path.join(pkg_dir, "layout.html")) else None)
+            if not f or not os.path.isfile(os.path.join(pkg_dir, f)):
+                _err(issues, "error", "manifest.json",
+                     "layout_source=package 的声明式包必须有存在的 layout 版式文件")
+        if src == "package" and form == "plugin" and not manifest.get("entry"):
+            _err(issues, "error", "manifest.json",
+                 "layout_source=package 的插件式包必须有 entry（版式由 render_html() 提供）")
+
+    # ---- ④ 字段对账：实现不得抽取标准之外的野字段 ----
+    spec: Optional[Dict[str, Any]] = None
+    if standard:
+        try:
+            if not manifest.get("entry"):
+                spec = runtime.load_spec(
+                    os.path.join(pkg_dir, manifest.get("schema") or "schema.yaml"))
+        except Exception as e:
+            _err(issues, "error", manifest.get("schema") or "schema.yaml",
+                 f"字段对账时解析失败: {e}")
+        declared = set(standard["fields"])
+        wild = sorted(_implemented_keys(manifest, spec) - declared)
+        if wild:
+            _err(issues, "error", std_name,
+                 f"实现字段不在 standard.json.fields 中（标准之外的野字段）：{', '.join(wild[:8])}"
+                 + (f" …共 {len(wild)} 个" if len(wild) > 8 else ""))
+        else:
+            implemented = _implemented_keys(manifest, spec)
+            pending = sorted(declared - implemented)
+            if pending:
+                _err(issues, "info", std_name,
+                     f"标准定义了 {len(declared)} 个字段，实现定位了 {len(implemented)} 个；"
+                     f"未定位 {len(pending)} 个（生成器骨架的 locator: pending 属正常）")
+
+    # ---- ⑤ samples：.txt + 同名 .expected.json ----
+    samp_dir = os.path.join(pkg_dir, "samples")
+    txts = sorted(f for f in os.listdir(samp_dir) if f.lower().endswith(".txt"))         if os.path.isdir(samp_dir) else []
+    if not txts:
+        _err(issues, "error", "samples/", "v2 包至少需要 1 份 .txt 样张")
+    for name in txts:
+        ep = os.path.join(samp_dir, name[:-4] + ".expected.json")
+        where = f"samples/{name[:-4]}.expected.json"
+        if not os.path.isfile(ep):
+            _err(issues, "error", where, f"样张 {name} 缺同名期望输出")
+            continue
+        try:
+            with open(ep, encoding="utf-8") as f:
+                golden = json.load(f)
+            if not isinstance(golden, dict) or not isinstance(golden.get("fields"), dict):
+                _err(issues, "error", where, "需含 fields 字典")
+            elif not isinstance(golden.get("skip", []), list):
+                _err(issues, "error", where, "skip 必须是数组")
+        except Exception as e:
+            _err(issues, "error", where, f"解析失败: {e}")
+    return {"v2": True, "standard": standard, "spec": spec}
 
 
 def _lint_plugin(pkg_dir: str, manifest: Dict[str, Any],
@@ -85,6 +286,10 @@ def lint_package(pkg_dir: str) -> Dict[str, Any]:
     except Exception as e:
         _err(issues, "error", "manifest.json", f"解析失败: {e}")
         return {"ok": False, "issues": issues, "pkg": pkg_dir}
+
+    # v2 契约检查必须在插件/声明式分派之前：两条路径都要被同一套规则覆盖。
+    # 未声明 contract_version 的包只拿一条 info（渐进纳管，见规格 D4）。
+    _lint_v2_contract(pkg_dir, manifest, issues)
 
     mid = manifest.get("id")
     if not mid:
@@ -259,12 +464,41 @@ def check_samples(pkg_dir: str, manifest: Optional[Dict[str, Any]] = None) -> Di
             with open(lp, encoding="utf-8") as f:
                 lines = json.load(f) or []
         doc = provider.extract(text, lines, 0, 0)
-        results.append({
+        row: Dict[str, Any] = {
             "sample": name,
             "hit": bool(doc),
             "fields": len(doc.get("flat", {})) if doc else 0,
             "tables": {k: len(v) for k, v in (doc or {}).get("tables", {}).items()},
-        })
+        }
+        # 逐字段对账是 **report**：只打印差异，不进 issues、不影响 ok / 退出码。
+        # 沿用规格 §6.6「结构自检设门禁、抽取效果只报告」的既定口径。
+        ep = os.path.join(samp_dir, name[:-4] + ".expected.json")
+        if os.path.isfile(ep):
+            try:
+                with open(ep, encoding="utf-8") as f:
+                    golden = json.load(f)
+                expected = golden.get("fields") or {}
+                skip = set(golden.get("skip") or [])
+                report: Dict[str, Any] = {
+                    "expected": len(expected), "matched": 0,
+                    "mismatched": [], "missing": [], "skipped": sorted(skip),
+                }
+                for path, want in expected.items():
+                    if path in skip:
+                        continue
+                    found, got = _expected_lookup(doc, path)
+                    want_s, got_s = _as_text(want), _as_text(got)
+                    if not found:
+                        report["missing"].append({"field": path, "expected": want})
+                    elif want_s == got_s:
+                        report["matched"] += 1
+                    else:
+                        report["mismatched"].append(
+                            {"field": path, "expected": want, "actual": got})
+                row["golden"] = report
+            except Exception as e:
+                row["golden"] = {"error": str(e)}
+        results.append(row)
     hits = sum(1 for r in results if r["hit"])
     return {
         "samples": len(results),

@@ -148,8 +148,13 @@ def test_manifest_provenance_and_x_keys_do_not_affect_loading(project_root):
     assert p is not None and p.origin == "user"
     assert p.title == "测试骨架" and p.version == "1.0.0" and p.priority == 900
     assert not os.path.exists(os.path.join(res["pkg"], "layout.html"))
-    assert set(res["files"]) == {"manifest.json", "schema.yaml",
-                                 "samples/README.md", "samples/skeleton.txt"}
+    # v1.2 起生成包是原生 v2：新增 README / standard / expected 三件套，
+    # 但仍 MUST NOT 产出 layout.html（标准只有数据模型，没有版式）。
+    assert set(res["files"]) == {
+        "manifest.json", "schema.yaml", "README.md", "standard.json",
+        "samples/README.md", "samples/skeleton.txt",
+        "samples/skeleton.expected.json",
+    }
 
 
 def test_two_generations_are_byte_identical(project_root):

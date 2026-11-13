@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-"""IR → schema 包（``manifest.json`` + ``schema.yaml`` + ``samples/``）。
+"""IR → schema 包（v2 五件套：manifest / schema.yaml / README / standard / samples）。
 
-三条不可动摇的输出约束（规格 §6.4 / §6.5 / §6.7）：
+四条不可动摇的输出约束（规格 §6.4 / §6.5 / §6.7 / §3.1.1）：
 
   * **不生成** ``layout.html``：国标只有数据模型，没有版式；
   * **不生成定位策略**：字段只有 ``key`` / ``label`` / ``locator: pending``，
     没有 ``regex`` / ``anchor`` / ``required``；``strict: false``；
-  * **保守 detect + 最低优先级**：``detect.any`` 只放标准号，``priority: 900``。
+  * **保守 detect + 最低优先级**：``detect.any`` 只放标准号，``priority: 900``；
+  * **原生 v2 包**：写 ``contract_version: 2`` / ``form: declarative`` /
+    ``layout_source: none``，并产出 ``README.md`` / ``standard.json`` /
+    ``samples/*.expected.json``；但**仍不生成** ``layout.html``。
 
 产物 MUST NOT 写进 ``schemas/``（注册表扫描根）或项目根之外。两次相同输入
 （含冻结时间）必须逐字节一致——所以 YAML 用 ``sort_keys=False`` 的固定插入顺序、
@@ -20,6 +23,8 @@ import shutil
 from typing import Any, Dict, List
 
 import yaml
+
+from schemas.lint import CONTRACT_VERSION
 
 from . import __version__
 from .ir import GENERATED_PRIORITY, IR
@@ -90,16 +95,99 @@ def build_spec(ir: IR) -> Dict[str, Any]:
 
 
 def build_manifest(ir: IR) -> Dict[str, Any]:
-    """构造 ``manifest.json``；``x-*`` 键 MUST NOT 影响装载。"""
+    """构造 ``manifest.json``；``x-*`` 键 MUST NOT 影响装载。
+
+    v2 字段用 ``schemas.lint.CONTRACT_VERSION`` 单一来源，避免生成器与 lint
+    各写一份数字。``layout_source: none`` 是**如实声明**：国标只有数据模型，
+    没有版式，不编造 ``layout.html``（规格 §3.1.1 三态）。
+    """
     return {
         "id": ir.schema_id,
         "title": ir.title,
         "version": ir.version,
         "kind": "user",
+        "contract_version": CONTRACT_VERSION,
+        "form": "declarative",
+        "layout_source": "none",
+        "standard": "standard.json",
+        "license": "MIT",
         "priority": GENERATED_PRIORITY,
         "schema": "schema.yaml",
         "x-provenance": ir.provenance(__version__),
     }
+
+
+def build_standard(ir: IR) -> Dict[str, Any]:
+    """构造 ``standard.json``：只描述**输出数据模型**，不含坐标与定位策略。
+
+    标准（PDF / XSD）给的是数据元与字段类型，通篇没有版式与正则；定位策略
+    一律在 ``schema.yaml`` 里以 ``locator: pending`` 占位。字段名跨实体复用时
+    按首次出现去重（生成包实测 342 字段元素 = 120 个唯一名）。
+    """
+    fields: Dict[str, Dict[str, Any]] = {}
+    for sec in ir.sections:
+        for f in sec.fields:
+            fields.setdefault(f.key, {
+                "type": "string",
+                "required": False,
+                "label": f.label,
+                "entity": f.entity,
+            })
+    return {
+        "standard": {
+            "code": ir.standard or "（生成器未指定标准编号）",
+            "title": ir.title,
+            "source_url": "",
+            "license": "字段取舍参考；标准全文不内嵌，原文版权归发布方所有",
+            "note": "本文件只描述输出数据模型；定位策略见 schema.yaml（当前全部 locator: pending）",
+        },
+        "fields": fields,
+    }
+
+
+def _readme_text(ir: IR) -> str:
+    return f"""# {ir.title}
+
+## 功能与适用范围
+
+本包由 `python -m schema_gen` 从标准源生成，描述「{ir.title}」的数据模型骨架，
+包含 {ir.field_count} 个字段元素、{len(ir.sections)} 个实体分段。
+**适用范围：仅作数据结构参考**，不能直接用于真实票面抽取，
+因为所有字段的定位策略仍是 `locator: pending`。
+
+## 使用方法
+
+1. `python -m schemas.cli validate {ir.schema_id}` 检查结构；
+2. 补齐 `schema.yaml` 的 `detect`、字段别名/锚点与 table 段 `start`/`stop`；
+3. 把 `samples/skeleton.txt` 换成真实票面识别文本，并填 `*.expected.json`；
+4. `python -m schemas.cli test {ir.schema_id}` 看命中率与逐字段对账报告。
+
+生成时用的标准源哈希与字段数见 `manifest.json` 的 `x-provenance`。
+
+## 主要特点与已知边界
+
+- 声明式零 Python，由通用 `runtime.py` 驱动；`strict: false`，
+  `priority: {GENERATED_PRIORITY}`（最低），`detect` 只用标准号作保守关键词。
+- 已知边界：无跨页合并、几何推理；**抽取效果尚未验证**
+  （骨架包实测 `hit_rate=0.0`，见规格 §6.6）。
+- **HTML 版式只是人读预览，不是合规归档版式**：本包 `layout_source: none`，
+  不生成 `layout.html`。归档需含数字签名的 XML 数据电文，版式为 OFD。
+
+## 字段来源与标准编号
+
+字段字典见 `standard.json`（`standard.code` / `standard.license` 与 `fields`）。
+标准只描述数据模型，**不含坐标、锚点与版式**；定位策略全在 `schema.yaml`。
+标准引用仅写编号与字段映射，不整份内嵌受版权保护的全文。
+
+## 版本与变更记录
+
+- {ir.version}：由 `python -m schema_gen` 生成的初始骨架。
+
+## 版权与许可
+
+本包随 pic2edit 以 MIT 许可发布；第三方署名见仓库 `THIRD_PARTY_NOTICES`。
+所引标准的原文版权归发布方所有，本包仅作字段取舍参考，不含标准全文。
+"""
 
 
 _SAMPLE_README = """# 样张说明（生成器产出）
@@ -132,12 +220,24 @@ def render_files(ir: IR) -> Dict[str, str]:
     """
     manifest = build_manifest(ir)
     spec = build_spec(ir)
+    standard = build_standard(ir)
+    # 骨架包所有字段都是 locator: pending，无法给出有意义的期望字段值；
+    # 写空的 golden 文件是**结构诚实**，不是漏做（规格 §6.6：效果只报告）。
+    golden = {
+        "note": "骨架样张：定位策略待补齐，暂无可断言的期望字段",
+        "fields": {},
+        "skip": [],
+    }
     return {
         "manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         "schema.yaml": yaml.safe_dump(spec, allow_unicode=True,
                                       sort_keys=False, default_flow_style=False),
+        "README.md": _readme_text(ir),
+        "standard.json": json.dumps(standard, ensure_ascii=False, indent=2) + "\n",
         "samples/README.md": _SAMPLE_README,
         "samples/skeleton.txt": _sample_text(ir),
+        "samples/skeleton.expected.json": json.dumps(
+            golden, ensure_ascii=False, indent=2) + "\n",
     }
 
 

@@ -317,8 +317,12 @@ def test_spec_section6_generator_contract_matches_source():
                                entity="Probe", source="spec"),)),))
     produced = emit.render_files(probe)
     assert "layout.html" not in produced, "生成器 MUST NOT 产出 layout.html"
-    assert set(produced) == {"manifest.json", "schema.yaml",
-                             "samples/README.md", "samples/skeleton.txt"}
+    # v1.2：生成包原生满足 v2 五件套（README / standard / expected）。
+    assert set(produced) == {
+        "manifest.json", "schema.yaml", "README.md", "standard.json",
+        "samples/README.md", "samples/skeleton.txt",
+        "samples/skeleton.expected.json",
+    }
     help_text = cli.build_parser().format_help()
     for flag in ("--source", "--member", "--id", "--out", "--standard",
                  "--detect-hint", "--offline", "--frozen-time", "--no-verify"):

@@ -44,6 +44,11 @@ _TEMPLATE_MANIFEST = """{
   "title": "{title}",
   "version": "0.1.0",
   "kind": "user",
+  "contract_version": 2,
+  "form": "declarative",
+  "layout_source": "package",
+  "standard": "standard.json",
+  "license": "MIT",
   "priority": 50,
   "schema": "schema.yaml",
   "layout": "layout.html"
@@ -53,7 +58,7 @@ _TEMPLATE_MANIFEST = """{
 _TEMPLATE_SCHEMA = """# {title} —— 字段与定位策略
 #
 # 三条要点（详见 ocr_app/schemas/README.md）：
-#   1. detect 只回答"像不像我"，用票面上一定出现的词；all 里放"必须同时出现"的确认词。
+#   1. detect 只回答"像不像我"，用票面上一定出现的词；需要更强约束可加 all 确认词。
 #   2. 字段按 regex → 标签同行 → 坐标锚点 的顺序取值，写得越具体越稳。
 #   3. table 分段必须写 start/stop 边界，否则上半部分的键值行会被当成数据行。
 id: {id}
@@ -64,9 +69,7 @@ strict: true
 
 detect:
   any:
-    - 换成票面上一定会出现的标题词
-  all:
-    - 换成更强的确认词（删掉本行则只靠 any）
+    - {title}
   none: []
 
 sections:
@@ -104,6 +107,77 @@ _TEMPLATE_LAYOUT = """<!--
   </table>
   <p>{{ remarks }}</p>
 </div>
+"""
+
+#: v2 五件套：包内自解释文档、数据规范、输入样张与期望输出。
+#: 六个章节标题被 lint.README_SECTIONS 静态检查，改名要同步规格 §3.1.1。
+_TEMPLATE_README = """# {title}
+
+## 功能与适用范围
+
+本包把「{title}」的识别文本抽成结构化字段，用于导出 md / txt / docx / html / json。
+适用范围：票面标题含 `{title}` 的单据；不适用于其它凭证类型。
+
+## 使用方法
+
+- GUI：工具栏「凭证类型」选「{title}」→ 开始转换 → 导出时选 HTML / JSON 可见字段化版式；
+  勾选「字段化预览」可在编辑区直接查看。
+- CLI：`python -m schemas.cli validate {id}` → `test {id}` → `pack {id}`；
+  转换侧用 `--schema {id}` 指定。
+
+## 主要特点与已知边界
+
+- 声明式零 Python：字段定位全在 `schema.yaml`，由通用 `runtime.py` 驱动。
+- 已知边界：无跨页合并、多遍扫描、几何推理；复杂票种应改用插件式 `provider.py`。
+- **HTML 版式只是人读预览，不是合规归档版式**：无数字签名与监制章套印。
+  归档需含数字签名的 XML 数据电文，版式为 OFD（另见 DA/T 94-2022）。
+
+## 字段来源与标准编号
+
+字段字典见 `standard.json`（`fields` + `standard.code` / `standard.license`）。
+本包定位策略见 `schema.yaml`；两者分离——标准只描述数据模型，不含坐标与版式。
+若引用国家或行业标准，请在 `standard.json` 写明编号、来源链接与引用范围，
+**不要整份内嵌标准全文**（版权与体积）。
+
+## 版本与变更记录
+
+- 0.1.0：由 `schemas.cli new` 生成的初始骨架。
+
+## 版权与许可
+
+本包代码与模板随 pic2edit 以 MIT 许可发布；署名见仓库 `THIRD_PARTY_NOTICES`。
+引用的第三方标准仅用于字段取舍参考，标准原文版权归发布方所有，本包不含其全文。
+"""
+
+_TEMPLATE_STANDARD = """{
+  "standard": {
+    "code": "填写国标/行标编号；无适用标准写 本项目自定义",
+    "title": "{title} 数据字段",
+    "source_url": "",
+    "license": "字段取舍参考；标准全文不内嵌，原文版权归发布方所有",
+    "note": "本文件只描述输出数据模型（字段字典），不含坐标、正则与版式；定位策略见 schema.yaml"
+  },
+  "fields": {
+    "example_no": {"type": "string", "required": true, "label": "示例编号"},
+    "remarks": {"type": "string", "required": false, "label": "备注"}
+  }
+}
+"""
+
+#: 输入样张：同时含 detect 的标题词与 required 字段值，骨架生成后即可命中。
+_TEMPLATE_SAMPLE_TXT = """{title}
+示例编号：SP-001
+备注：示例备注
+"""
+
+#: 期望输出（golden）。路径写法见规格 §3.8.1；差异只报告、不设门禁。
+_TEMPLATE_EXPECTED = """{
+  "note": "{title} 骨架样张：验证 required 字段能被抽到",
+  "fields": {
+    "flat.example_no": "SP-001"
+  },
+  "skip": []
+}
 """
 
 
@@ -192,6 +266,18 @@ def cmd_test(args) -> int:
     for r in s.get("results") or []:
         print(f"  {r['sample']}: {'命中' if r['hit'] else '未命中'}，"
               f"字段 {r['fields']} 个，表格 {r['tables']}")
+        # golden 逐字段对账：只报告差异，不影响 ok / 退出码（规格 §6.6 既定口径）。
+        g = r.get("golden")
+        if isinstance(g, dict) and "error" not in g:
+            print(f"    期望字段 {g['expected']} 项：匹配 {g['matched']}，"
+                  f"不符 {len(g['mismatched'])}，缺失 {len(g['missing'])}，"
+                  f"跳过 {len(g['skipped'])}（只报告，不设门禁）")
+            for m in g["mismatched"][:5]:
+                print(f"      [不符] {m['field']}: 期望 {m['expected']!r}，实得 {m['actual']!r}")
+            for m in g["missing"][:5]:
+                print(f"      [缺失] {m['field']}: 期望 {m['expected']!r}")
+        elif isinstance(g, dict):
+            print(f"    期望输出解析失败: {g['error']}")
     ok = s["hit_rate"] >= args.min_rate
     print("通过" if ok else f"未达门槛（要求命中率 ≥ {args.min_rate:.0%}）")
     return 0 if ok else 1
@@ -227,7 +313,12 @@ def cmd_new(args) -> int:
         "manifest.json": _fill(_TEMPLATE_MANIFEST, args.id, title),
         "schema.yaml": _fill(_TEMPLATE_SCHEMA, args.id, title),
         "layout.html": _fill(_TEMPLATE_LAYOUT, args.id, title),
-        "samples/README.md": "把样张识别文本存成 .txt 放这里，然后跑 `schema test %s`。\n" % args.id,
+        "README.md": _fill(_TEMPLATE_README, args.id, title),
+        "standard.json": _fill(_TEMPLATE_STANDARD, args.id, title),
+        "samples/README.md": "把样张识别文本存成 .txt、期望输出存成同名 .expected.json，"
+                             "然后跑 `python -m schemas.cli test %s`。\n" % args.id,
+        "samples/demo.txt": _fill(_TEMPLATE_SAMPLE_TXT, args.id, title),
+        "samples/demo.expected.json": _fill(_TEMPLATE_EXPECTED, args.id, title),
     }
     for name, content in files.items():
         with open(os.path.join(pkg, name), "w", encoding="utf-8") as f:

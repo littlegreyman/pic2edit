@@ -371,7 +371,7 @@ GUI 填充时按白名单过滤，避免「删了下拉、后端字典也跟着�
 |---|---|---|
 | P0 统一导出入口 | ✅ `61358a8` | 全量 323 passed ×2、ruff 绿；GUI 5 种格式与 `export_by_ext` 逐格式对账 |
 | P1 抽取正确性与模式路由 | ✅ 本 commit | 全量 330 passed ×2、ruff 绿；脱敏上海票端到端 md 1445B 含 `<!-- schema: invoice@1.0.0 -->`、无「密码区」/「合」错值 |
-| P2 包结构契约 v2 | ⏳ 待做 | 规格 §3.1 / lint / `cli new` / `schema_gen.emit` / 静态门禁 |
+| P2 包结构契约 v2 | ✅ 本 commit | 全量 345 passed ×2、ruff 绿；规格升 v1.2、lint/cli/emit 落地、15 项门禁（含 6 个缺件负例真跑） |
 | P3 内置包补齐 | ⏳ 待做 | 含决策 1：**独立 `invoice_digital` 包**，与 `invoice` 的 detect 必须互斥 |
 | P4 真机验收与发布收口 | ⏳ 待做 | 用户原生桌面；CI 在 HEAD 上绿；版本位与说明文档对账 |
 
@@ -386,3 +386,32 @@ P1 落地要点（与 §4 的差异说明）：
   （公司名/人名/地址/银行与所有长标识串均已脱敏，测试内含结构自检）。
 - 草案 P1 原列「补 3 份 golden 样张」，本轮先落 1 份真机样张 + 既有
   `testdata/invoice_sample.py`；其余 2 份（数电票骨架等）随 P3 补齐。
+
+P2 落地要点（与 §3.2 / §4 的差异说明，已同步进规格 v1.2 的 D4/D5）：
+
+- **草案两处字段名与现有实现冲突，实施时已修正**：① §3.2 ② 原写「按 `kind`
+  分档」，但 `kind` 是包自报的来源标签（`builtin`/`user`），规格 §3.3 与 C10
+  明确禁止把它当能力判据，`test_list_shows_load_origin_not_declared_kind` 也钉住了；
+  ② ③ 原写「`layout` 声明三态」，但 `layout` 已是**版式文件名**，
+  `registry._build` / `runtime.DeclarativeProvider` 直接拿它当路径读。
+  因此 v2 改用新增字段 **`form`**（`declarative|plugin`）与
+  **`layout_source`**（`package|generic|none`），原有字段语义不变、装载零改动。
+- **渐进纳管是 P2 能自身收口的必要设计**：P2 建立门禁、P3 才补齐内置包，
+  若门禁在 P2 就要求所有包满足 v2，P2 必然测试红。故 v2 MUST 只对显式声明
+  `contract_version: 2` 的包生效；`schemas.cli new` 与 `schema_gen.emit` 原生产 v2，
+  内置包未声明时只给一条 `info` 升级提示。P3 补齐文件并声明后自动纳入硬检查，
+  门禁测试 `test_undeclared_builtin_packages_stay_green_with_info` 已为那一刻留好断言。
+- **生成器产物 4 → 7 文件**：新增 `README.md` / `standard.json` /
+  `samples/skeleton.expected.json`；`manifest.json` 写 `layout_source: none`，
+  **仍不生成 `layout.html`**（标准没有版式，不编造）。两处「产物文件集合」的
+  既有精确断言（`test_schema_gen.py` / `test_schema_spec.py`）已同步。
+- **golden 逐字段对账只报告、不设门禁**：`check_samples()` 增 `_flatten_doc()`
+  展平两种 doc 形状，`cli test` 打印匹配/不符/缺失/跳过。差异不进 lint issues、
+  不影响退出码，沿用规格 §6.6 口径，避免不同机器 OCR 波动让 CI 无故变红。
+- **负例真跑证据**（完整骨架 `error=0`，逐项破坏后各得 1 条 error）：
+  删 README / 删 standard.json / 删 expected / `form=bogus` /
+  `layout_source=none` 却留 layout 文件 / schema.yaml 加标准外野字段。
+  `pack` 在缺 standard.json 时退出 1 且不产 zip，`--force` 例外仍可打包。
+- **CLI 真跑**：`new → validate（无问题）→ test（命中率 100%，golden 匹配 1）
+  → pack（8 文件，sha256 打印）` 全绿；生成器 `verify()` 结构层与 auto 不误命中
+  门禁全过，效果层仍诚实标注「未验证」（`gated=False`）。

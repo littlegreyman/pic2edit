@@ -1,4 +1,4 @@
-# pic2edit 凭证 schema 技术规格 v1.1
+# pic2edit 凭证 schema 技术规格 v1.2（含 v1.1 全部条款）
 
 > 状态：**规范性文档（Normative）** · 2026-11-06 · 适用 `ocr_app/schemas/` 全部实现与「schema 生成流程」
 > 本文定义的是**契约**，不是教程。教程见 `schemas/README.md`，skill 对调用方的行为承诺见
@@ -12,6 +12,13 @@
 > §5.9 补生成器 CLI 行；§6.1/§6.5/§6.7 把「342 字段」参数化——官网实测
 > `PPE.xsd` 为 `xs:element` 361 / `complexType` 10 / `simpleType` 297，不得硬编码；
 > §3.13 与 §7 的 D1/D2/D7 状态按实现进度更新。执行计划见 `docs/schema-gen-plan.md`。
+>
+> **v1.2 修订（2026-11-13，凭证包 v2 契约）**：新增 §3.1.1「包目录 v2 清单」、
+> §3.3.1「v2 manifest 字段」、§3.8.1「期望输出样例」、§3.13.1「v2 lint 规则」。
+> 起因是用户提出「每个凭证类型一个目录，至少含说明 / 数据规范 / 抽取程序 /
+> 版式模板 / 输入输出例子」五件套；真机取证后确认包内容契约确需补齐，但
+> **不得把「数据规范」与「定位策略」混写**，也不得强制声明式包自带 Python。
+> 实施计划与决策记录见 `docs/schema-package-v2-plan.md`。
 
 ---
 
@@ -127,6 +134,73 @@
 - `entry` 与 `schema.yaml` **二选一**；两者都没有 → 装载失败并告警跳过。【实现】
 - 编码统一 UTF-8；YAML 由 `yaml.safe_load` 解析（**MUST NOT** 用 `yaml.load`）。【实现】
 
+### 3.1.1 包目录 v2 清单（contract_version: 2）
+
+> **本节的 MUST 只对显式声明 `contract_version: 2` 的包生效**。未声明的包按
+> §3.1 的 v1 规则检查，只给一条 `info` 建议升级——这是为了让契约可以分阶段
+> 纳管存量包，而不是一次性把仓库里所有包判为不合格（见 §3.14 D4）。
+> `schemas.cli new` 与 `python -m schema_gen` **MUST** 直接产出 v2 包。
+
+```
+<id>/
+├── manifest.json        MUST  声明 contract_version: 2 / form / layout_source
+├── README.md            MUST  六个固定章节（见下）
+├── standard.json        MUST  数据规范：字段字典 + 标准来源与版权声明
+├── schema.yaml          MUST  定位策略（声明式）；插件式可省略
+├── layout.html          MAY   仅 layout_source: package 的声明式包
+├── provider.py          MAY   仅 form: plugin
+├── samples/
+│   ├── <name>.txt           MUST  ≥1 份识别文本
+│   ├── <name>.lines.json    MAY   行框
+│   └── <name>.expected.json MUST  与 .txt 同名的期望字段（golden）
+└── ...
+```
+
+**五点方案与本节字段的对应关系**（用户 2026-11-13 提出，逐条落到契约）：
+
+| 用户要求 | v2 契约落点 | 说明 |
+|---|---|---|
+| ① 凭证类型说明 | `README.md` MUST | 六个固定章节，由 lint 检查存在性 |
+| ② 数据规范（优先国标/行标） | `standard.json` MUST | 只放**输出数据模型**：字段字典、类型、必填、枚举、校验、标准编号、来源链接、版权与许可 |
+| ③ 抽取程序 | `form: declarative` 或 `plugin` | **MUST NOT 强制每包有 Python**：声明式由 `runtime.py` 通用引擎驱动，零自定义代码是设计优点 |
+| ④ 版式模板 | `layout_source` 三态 | `package` / `generic` / `none`；不强制编造版式（标准通常不含版式） |
+| ⑤ 输入输出例子 | `samples/*.txt` + `*.expected.json` | 必须有 **期望输出**，否则 golden 无法锁住字段正确性 |
+
+**① 数据规范与定位策略 MUST 分离**（最易出错的一处）。国标/行标描述的是
+「有哪些数据元、什么类型、什么编码」，**通篇没有坐标、锚点、正则或版面**
+（生成器 P1–P3 已用 PDF↔XSD 对账证实）。因此：
+
+- `standard.json` 是**字段字典权威**，只描述数据模型，MUST NOT 写 `regex` / `anchor` / `start`；
+- `schema.yaml` 是**定位策略权威**，字段 `key` MUST 能在 `standard.json.fields` 中找到
+  （实现不得抽取标准之外的野字段），但 `standard.json` 里定义了却未实现定位的字段
+  允许存在（生成包 `locator: pending` 即此状态，lint 报 `info` 覆盖率）；
+- 标准全文 **MUST NOT 整份内嵌**（版权与体积），只写编号、字段映射、来源链接与许可声明。
+
+**② `form` 与 `kind` MUST NOT 混用**。`kind` 是包自报的来源标签
+（`builtin` / `user`），§3.3 与 C10 明确规定它 **MUST NOT** 作为能力判据，
+`schemas.cli list` 显示的是注册表实际加载根目录 `origin`。v2 新增 `form`
+字段单独表达实现档位：`declarative`（`schema.yaml` + 通用 `runtime`）/
+`plugin`（`entry` 指向的 Python，自带 `render_*`）。
+
+**③ 版式来源三态**（`layout_source`）。生成器明确「国标只有数据模型 → 不生成
+`layout.html`」，对这类包强制编造版式等于用猜测的版面冒充规范版式：
+
+| 取值 | 语义 | 约束 |
+|---|---|---|
+| `package` | 本包自带版式 | 声明式 MUST 有 `layout` 且文件存在；插件式 MUST 有 `entry` 且 provider 实现 `render_html()` |
+| `generic` | 走 `runtime._generic_html()` 兜底 | MUST NOT 声明 `layout` |
+| `none` | 仅输出结构化数据 | MUST NOT 声明 `layout`；HTML 导出走忠实版式 |
+
+> **合规边界（MUST NOT 越界）**：HTML 版式是**人读预览**，不是合规归档版式。
+> 数电票入账归档需保存含数字签名的 XML 数据电文、版式文件为 OFD
+> （国家税务总局公告 2024 年第 11 号及配套问答；电子会计档案另见 DA/T 94-2022）。
+> 本契约的 `layout.html` 不含数字签名与监制章套印，**不得**当作归档版式交付。
+
+**④ `README.md` 六个固定章节**（lint 按标题关键词检查存在性）：
+功能与适用范围 / 使用方法 / 主要特点与已知边界 / 字段来源与标准编号 /
+版本与变更记录 / 版权与许可。最后一节 MUST 声明第三方标准的引用范围与许可，
+与本仓库 `THIRD_PARTY_NOTICES` 对齐。
+
 ## 3.2 权威来源规则（最容易漂移的一处）
 
 | 信息 | 权威来源 | 说明 |
@@ -156,6 +230,19 @@
 | `description` | str | MAY | — | 纯说明 | 无（文档用途） | 无影响 |
 | `detect` / `fields` | any | MAY | — | **当前实现不消费**（内置 `invoice/manifest.json` 里有，仅作人类速查） | 无 | 生成器 MUST NOT 依赖它们生效 |
 | `x-*` | any | MAY | — | 扩展键；生成器 provenance 放这里（§6.5） | 无（保留） | MUST NOT 影响装载 |
+
+#### 3.3.1 v2 新增字段（仅 `contract_version: 2` 的包）
+
+| 键 | 类型 | 必需 | 取值 / 约束 | 被谁读 | 说明 |
+|---|---|---|---|---|---|
+| `contract_version` | int | **MUST** | `2` | `lint.lint_package` | 显式声明遵守 v2；未声明 = v1 兼容（§3.1.1） |
+| `form` | str | **MUST** | `declarative` / `plugin` | `lint` / 文档 | 实现档位；**不复用 `kind`** |
+| `layout_source` | str | **MUST** | `package` / `generic` / `none` | `lint` | 版式来源三态；与 `layout` 文件名并存 |
+| `standard` | str | MAY | 默认 `standard.json` | `lint` | 数据规范文件名 |
+| `license` | str | SHOULD | SPDX 标识符 | 文档 | 包自身许可证；标准引用另见 `standard.json.standard.license` |
+
+这些键**不参与装载**：`registry._read_manifest()` 只要求 `id`，其余原样透传。
+新增字段不得改变 `info_of()` / `SchemaProvider` 的现有行为。
 
 **`entry` 与 `layout` 互斥语义**【实现】：`layout` 指的是**声明式 HTML 模板文件**；
 插件式的 HTML 由 `render_html()` 现算。两者同时声明 → lint `warning`，且仍检查文件存在。
@@ -280,6 +367,34 @@ lint：`key` 重复 / 与段名同名 / 未知 anchor / 正则编译失败 → `
 `check_samples()` 返回 `{samples, with_samples, hit_rate, results[]}`，每项
 `{sample, hit, fields, tables}`；`schemas.cli test --min-rate`（默认 **0.8**）据此判通过。
 **SHOULD** ≥3 份样张，覆盖正常 / 缺字段 / 不同版式。生成器 **MUST** 至少产出一份可命中样张（§6.6）。
+
+### 3.8.1 期望输出样例（v2 MUST）
+
+`samples/<name>.expected.json` 与 `.txt` 同名，结构：
+
+```jsonc
+{
+  "note": "可选说明：这份样张覆盖了什么",
+  "fields": {              // 路径 -> 期望值；值为 null 表示期望「抽不到」
+    "buyer.name": "示例采购有限公司",
+    "flat.asset_no": "A-001",
+    "items[0].name": "示例文具"
+  },
+  "skip": ["seller.bank_account"]   // 不参与对账的字段（如 OCR 质量波动项）
+}
+```
+
+路径解析规则（由 `lint._flatten_doc()` 实现，**唯一入口**）：
+
+1. 先把 `extract()` 返回的 `doc` 递归展平成点路径 + `[i]` 索引（`dict` 用 `.`，`list` 用 `[i]`）；
+2. 声明式 `doc.flat` 同时提供**不带 `flat.` 前缀**的裸键别名，两种写法都合法；
+3. 值统一按 `str` 比较；`null` 期望表示「该字段应为空」。
+
+`check_samples()` 对每份样张附一份 `golden` 报告
+`{expected, matched, mismatched[], missing[], skipped[]}`，`schemas.cli test` 打印它。
+**MUST NOT 把 golden 差异设为门禁或影响退出码**——沿用 §6.6「结构自检设门禁、
+抽取效果只报告」的既定口径：不同机器 OCR 质量波动会让 CI 无故变红。
+golden 的价值是让 `buyer.address="密码区"` 这类错值在人工复核时一目了然。
 
 ## 3.9 运行时数据契约：`page` 与 `doc`
 
@@ -410,6 +525,23 @@ lint `_lint_plugin` 检查六个方法可调用 + `entry` 文件存在。【实�
 `pack` 流程：先 `lint_package` → 不通过且无 `--force` 则拒绝 → 打包（剔除 `.pyc`/`__pycache__`/`.git`）→
 打印文件数与 **sha256** → 打印安装路径。【实现】
 
+### 3.13.1 v2 lint 规则（仅 `contract_version: 2` 的包）
+
+| 级别 | 检查 | 影响 |
+|---|---|---|
+| `error` | `README.md` 缺失或六章节缺任一 | `validate` 退出 1；`pack` 拒绝打包 |
+| `error` | `standard.json` 缺失 / 解析失败 / 缺 `fields` 字典 | 同上 |
+| `error` | `form` 或 `layout_source` 非法或缺失 | 同上 |
+| `error` | `layout_source` 与 `layout` 冲突（`generic`/`none` 却声明了版式文件；`package` 的声明式包缺文件） | 同上 |
+| `error` | 实现字段（yaml 的 `fields[].key` / `columns[].key`，或插件式 `manifest.fields`）不在 `standard.json.fields` 中 | 同上；防止抽取标准之外的野字段 |
+| `error` | `samples/` 无 `.txt`，或某份 `.txt` 缺同名 `.expected.json` | 同上 |
+| `error` | `.expected.json` 解析失败 / 结构非法（`fields` 不是 dict、`skip` 不是 list） | 同上 |
+| `warning` | `standard.json` 缺 `standard.code` / `standard.license` 等来源声明 | 不阻断 |
+| `info` | `standard.json.fields` 定义了但实现未定位的字段（覆盖率报告） | 不阻断 |
+| `info` | 未声明 `contract_version` 的 v1 包：建议升级 v2 | 不阻断，渐进纳管 |
+
+`check_samples()` 的逐字段对账结果属 `report`，**不进 `issues`、不影响 `ok`**。
+
 > 双向对账存在的原因：项目曾把 `docs/invoice_schema.md` 与抽取代码各写一份字段表，
 > 靠人脑同步，文档长期落后。两个文件 + 机器 lint 是唯一可维护的方案。
 
@@ -420,6 +552,8 @@ lint `_lint_plugin` 检查六个方法可调用 + `entry` 文件存在。【实�
 | D1 | `table` 段缺 `start` | 规范 MUST；lint 应告警 | **v1.1 已补**：`lint_package()` 对缺 `start` 的 table 段报 `warning`（不阻断，见 §3.13） |
 | D2 | `schema.yaml` 与 manifest 的 `version` 不一致 | SHOULD 一致 | **v1.1 已补**：lint 对 `title` / `version` / `priority` 三处不一致报 `warning`；generator 输出时保证一致 |
 | D3 | `origin` 可选值 | `builtin` / `user` | `PIC2EDIT_SCHEMA_DIR` 与 `reset_registry(extra_dirs)` 也标 `user`（合理，但生成器需知道） |
+| D4 | 存量包未满足 v2 五件套 | v2 清单是 MUST | **v1.2 起按 `contract_version: 2` 渐进纳管**：`cli new` / 生成器产物原生 v2；内置 `invoice` / `asset_card` 补齐文件并声明后才纳入硬检查（见 §3.1.1） |
+| D5 | 草案原写「按 `kind` 分档」「`layout` 三态」 | — | **已修正**：`kind` 是来源标签（C10 禁止作判据），`layout` 是版式文件名；v2 改用新字段 `form` / `layout_source`，避免破坏 `registry._build` 与 `test_list_shows_load_origin_not_declared_kind` |
 
 ---
 
@@ -1053,7 +1187,10 @@ sections:
 | 版式两种语法 | `schemas/runtime.py::render_layout` / `_PLACEHOLDER_RE` / `_REPEAT_RE` / `_lookup` |
 | doc 形状 | `schemas/runtime.py::DeclarativeProvider.extract` |
 | lint 规则 | `schemas/lint.py::lint_package` / `_lint_plugin` / `check_samples` |
-| B 侧 CLI | `schemas/cli.py::main` / `cmd_new` / `cmd_pack` / `_SAFE_ID_RE` |
+| v2 契约检查 | `schemas/lint.py::_lint_v2_contract` / `_flatten_doc` / `CONTRACT_VERSION` |
+| v2 骨架模板 | `schemas/cli.py::_TEMPLATE_MANIFEST` / `_TEMPLATE_README` / `_TEMPLATE_STANDARD` / `cmd_new` |
+| v2 生成器产物 | `schema_gen/emit.py::build_manifest` / `build_standard` / `render_files` |
+| v2 可执行契约 | `test_schema_package_contract.py`（含缺件负例真跑） || B 侧 CLI | `schemas/cli.py::main` / `cmd_new` / `cmd_pack` / `_SAFE_ID_RE` |
 | HTML 清洗白名单 | `utils/html_safety.py::sanitize_html` / `ALLOWED_TAGS` / `ALLOWED_ATTRS` |
 | 五格式导出 / 三档降级 | `utils/export_formats.py::export_html` / `export_json` / `export_by_ext` |
 | 忠实版式 | `utils/faithful_html.py::page_with_image` / `faithful_css` |

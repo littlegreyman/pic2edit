@@ -118,16 +118,19 @@ cd ocr_app
 # 1. 生成空壳（默认写到 ~/.pic2edit/schemas/）
 python -m schemas.cli new my_doc --title 我的单据
 
-# 2. 改 schema.yaml 的 detect 与字段，往 samples/ 放样张文本
+# 2. 改 schema.yaml 的 detect 与字段，往 samples/ 放样张文本与期望输出
 
 # 3. 结构与版式对账
 python -m schemas.cli validate my_doc --samples
 
-# 4. 只看命中率（门槛默认 80%）
+# 4. 命中率 + 期望字段逐项对账报告
 python -m schemas.cli test my_doc
 
 # 5. 看看注册表认不认
 python -m schemas.cli list
+
+# 6. 校验通过后打成可分发 zip（打印 sha256）
+python -m schemas.cli pack my_doc
 ```
 
 `validate` 检查的是**两个文件会不会漂移**，这也是本项目已经踩过的坑
@@ -137,6 +140,36 @@ python -m schemas.cli list
 - 版式里的占位在 schema 里不存在 → **错误**（会永远渲染成空，等于打错字）；
 - `data-repeat` 指向的分段不存在或不是 table → **错误**；
 - 正则编译失败、key 重复、mode/anchor 不认识 → 错误。
+
+### 包结构 v2 五件套（`new` 生成的就是 v2）
+
+`cli new` 与 `python -m schema_gen` 产出的包都带 `contract_version: 2`，
+目录里除 `manifest.json` / `schema.yaml` / `layout.html` 外还有：
+
+| 文件 | 作用 |
+|---|---|
+| `README.md` | 功能与适用范围 / 使用方法 / 主要特点与已知边界 / 字段来源与标准编号 / 版本与变更记录 / 版权与许可（六章固定，lint 会查） |
+| `standard.json` | **数据规范**：字段字典 + 标准编号/来源/许可。只描述「有哪些数据元」，不写坐标与正则 |
+| `samples/<name>.txt` | 输入：票面识别文本 |
+| `samples/<name>.expected.json` | 输出：期望字段值（golden），`cli test` 逐项对账并打印差异 |
+
+**数据规范与定位策略是两件事**：国家标准只写数据模型，通篇没有版式和坐标，
+所以 `standard.json` 管字段定义、`schema.yaml` 管「怎么在票面上找到它」。
+`schema.yaml` 里的字段 `key` 必须能在 `standard.json.fields` 里找到，
+但反过来标准里定义了、暂时没定位策略的字段是允许的（生成骨架就全是
+`locator: pending`）。
+
+声明式包**不需要写 Python**——零自定义代码由 `runtime.py` 通用引擎驱动，
+这是设计优点不是缺陷。是否自带 HTML 版式用 `layout_source` 声明三态：
+`package`（本包 `layout.html`）/ `generic`（通用兜底）/ `none`（仅结构化数据）。
+标准没有版式时不要编造，写 `none` 即可。
+
+`expected.json` 的差异**只报告、不设门禁**：不同机器 OCR 质量会波动，
+把它做成 CI 硬门槛会无故变红。它的用途是人工复核时一眼看出
+`buyer.address="密码区"` 这类错值。
+
+> 存量内置包尚未声明 v2，`validate` 只给一条 `info` 建议，不会判红。
+> 完整规范与渐进纳管口径见 `docs/schema-technical-spec-v1.md` §3.1.1。
 
 ## 五、用户级目录
 
