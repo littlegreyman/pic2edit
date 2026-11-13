@@ -32,21 +32,21 @@
 | 19:21:17 | 导出 | `format=md` |
 | 19:22:52 | 转换 #2 | `mode=markdown skip_disc=True` → `source=vlm chars=45`，`schema hit` |
 | 19:24:26 | 转换 #3 | 同上，`source=vlm chars=45`，`schema hit` |
-| 19:25:06 | 导出 | `/home/michael/下载/上海发票-样.md`，`format=md` |
+| 19:25:06 | 导出 | `上海发票-样.md`（用户下载目录，路径略），`format=md` |
 
 `skip_disc=True` 来自 `backends/routing.py:18`：`_SKIP_DISC_PAGE_TYPES = {"table","figure","html_table"}`。
 截图那次（19:25:16 / 19:25:24）的日志已随 GUI 重启被轮转，但产物仍在磁盘。
 
 ### 1.2 产物实测
 
-`/home/michael/下载/上海发票-样.md`：**1254 字节 / 20 行**，首行 `<!-- 第 1 页 -->`，
+导出的 `上海发票-样.md`：**1254 字节 / 20 行**，首行 `<!-- 第 1 页 -->`，
 其余为 `|` 分隔的 pipe 表格；`schema:` 溯源 **无**，任何 HTML 标签 **无**。
 同目录 **不存在** `.html` / `.json` 文件。表格中「购 名 称」与值错列、「密码区」混进
 买方地址行——这是**几何行框重建**的特征，不是字段化抽取。
 
 ### 1.3 对照实验 A：同图重跑判别式 OCR → invoice 抽取
 
-`DiscriminativeBackend.ocr_image_with_lines('/home/michael/下载/上海发票-样.png')`
+`DiscriminativeBackend.ocr_image_with_lines('上海发票-样.png')`（本机扫描件，路径略）
 → `chars=553`，`lines=58`，`W/H=1015x655`，与日志 `chars=553` 逐字吻合。
 
 喂给 `schemas/invoice/extract.py::extract_invoice(text, lines, W, H)`：
@@ -249,7 +249,7 @@ MUST 含：功能与适用范围 / 使用方法（GUI 与 CLI 两种）/ 主要�
 - **`html_table` 从 GUI 下拉删除**（决策 2）：保留后端模式字典与 CLI/skill 支持，
   只过滤 GUI 白名单；新增静态门禁断言下拉不含该模式；S3 的端到端断言改为
   「GUI 可选模式集合 == 白名单」而非锁定 `<table>` 产物。
-- 验收：用 `/home/michael/下载/上海发票-样.png` 真跑 CLI + 本地 GUI 导出，
+- 验收：用同一张发票扫描件 `上海发票-样.png` 真跑 CLI + 本地 GUI 导出，
   逐项对账 `buyer.address` 不再是「密码区」、`items` 无「合」、
   md/html/json 三种产物均含 schema 且字段一致；`source=disc` 页不再触发坐标重建覆盖。
   > 沙箱可跑判别式 OCR（本轮已验证），但 OCR 识别质量仍须用户原生桌面复核。
@@ -372,7 +372,7 @@ GUI 填充时按白名单过滤，避免「删了下拉、后端字典也跟着�
 | P0 统一导出入口 | ✅ `61358a8` | 全量 323 passed ×2、ruff 绿；GUI 5 种格式与 `export_by_ext` 逐格式对账 |
 | P1 抽取正确性与模式路由 | ✅ `eff6317` | 全量 330 passed ×2、ruff 绿；脱敏上海票端到端 md 1445B 含 `<!-- schema: invoice@1.0.0 -->`、无「密码区」/「合」错值 |
 | P2 包结构契约 v2 | ✅ `cd5a1f7` | 全量 345 passed ×2、ruff 绿；规格升 v1.2、lint/cli/emit 落地、15 项门禁（含 6 个缺件负例真跑） |
-| P3 内置包补齐 | ✅ 本 commit | 三包全量升级 v2 + 独立 `invoice_digital`（detect 互斥、priority 20<50<100）；16 项门禁，auto 三路由互斥真跑，4 份 golden 全部匹配，三包 `pack` 均成功且 zip 内五件套齐全；全量 361 passed、ruff 绿 |
+| P3 内置包补齐 | ✅ `abd3f50` | 三包全量升级 v2 + 独立 `invoice_digital`（detect 互斥、priority 20<50<100）；16 项门禁，auto 三路由互斥真跑，4 份 golden 全部匹配，三包 `pack` 均成功且 zip 内五件套齐全；全量 361 passed、ruff 绿 |
 | P4 真机验收与发布收口 | ⏳ 待做 | 用户原生桌面；CI 在 HEAD 上绿；版本位与说明文档对账 |
 
 P1 落地要点（与 §4 的差异说明）：
